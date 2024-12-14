@@ -38,35 +38,35 @@ func (e *ValidationError) Error() string {
 
 // ValidateUserCode checks if a user code meets all requirements
 func ValidateUserCode(code string) error {
-	// Normalize code
+	// Normalize code for validation
 	code = strings.ToUpper(strings.TrimSpace(code))
-
-	// First check length without separator to give most specific error
 	baseCode := strings.ReplaceAll(code, "-", "")
+
+	// First check exact length without separator
 	if len(baseCode) != MinLength {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("code must be exactly %d characters (excluding separator)", MinLength),
+			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
 		}
 	}
 
-	// Check format and allowed characters
+	// Check format and character set
 	if !codeRegex.MatchString(code) {
 		return &ValidationError{
 			Code:    code,
-			Message: "code must be in format XXXX-XXXX using only allowed characters",
+			Message: fmt.Sprintf("code must be in format XXXX-XXXX using only allowed characters: %s", ValidCharset),
 		}
 	}
 
-	// Check character distribution before entropy
+	// Check for repeated characters
 	charCounts := make(map[rune]int)
-	maxAllowedRepeats := MaxLength/len(ValidCharset) + 2 // Limit based on charset size
+	maxAllowed := 2 // Stricter limit for better security
 	for _, char := range baseCode {
 		charCounts[char]++
-		if charCounts[char] > maxAllowedRepeats {
+		if charCounts[char] > maxAllowed {
 			return &ValidationError{
 				Code:    code,
-				Message: fmt.Sprintf("character %c appears too many times (max %d allowed)", char, maxAllowedRepeats),
+				Message: fmt.Sprintf("too many repeated characters: %c appears more than %d times", char, maxAllowed),
 			}
 		}
 	}
@@ -75,7 +75,7 @@ func ValidateUserCode(code string) error {
 	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("code entropy %.2f bits is below required minimum %d bits", entropy, MinEntropy),
+			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.0f bits", entropy, MinEntropy),
 		}
 	}
 
