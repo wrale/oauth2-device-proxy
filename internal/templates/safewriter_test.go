@@ -115,7 +115,13 @@ func TestSafeWriter_Write(t *testing.T) {
 			}
 
 			for _, write := range tt.writes {
-				sw.Write([]byte(write))
+				n, err := sw.Write([]byte(write))
+				if err != nil {
+					t.Fatalf("Write() error = %v", err)
+				}
+				if n != len(write) {
+					t.Errorf("Write() wrote %d bytes, want %d", n, len(write))
+				}
 			}
 
 			if mock.statusCode != tt.wantStatus {
@@ -143,7 +149,9 @@ func TestSafeWriter_Written(t *testing.T) {
 		t.Error("new SafeWriter reports as written")
 	}
 
-	sw.Write([]byte("test"))
+	if _, err := sw.Write([]byte("test")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 
 	if !sw.Written() {
 		t.Error("SafeWriter.Written() = false after Write")

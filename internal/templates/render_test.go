@@ -227,12 +227,6 @@ func TestRenderToString(t *testing.T) {
 func TestTemplateErrorHandling(t *testing.T) {
 	templates := setupTemplates(t)
 
-	// Test invalid template execution with properly typed VerifyData
-	// but containing an unrenderable field
-	type invalidStruct struct {
-		Invalid chan bool
-	}
-
 	mock := newMockResponseWriter()
 	data := VerifyData{
 		CSRFToken: "test-token",
