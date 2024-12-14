@@ -128,6 +128,12 @@ func split(s, sep string, n int) []string {
 		return parts
 	}
 
+	// Special case: no separator found
+	if idx := find(s, sep); idx < 0 {
+		parts[n-1] = s // Put entire string in last part
+		return parts
+	}
+
 	// Split only up to n parts
 	remaining := s
 	for i := 0; i < n-1; i++ {
@@ -135,6 +141,7 @@ func split(s, sep string, n int) []string {
 			parts[i] = remaining[:idx]
 			remaining = remaining[idx+len(sep):]
 		} else {
+			parts[n-1] = remaining // Put remaining string in last part
 			return parts
 		}
 	}
