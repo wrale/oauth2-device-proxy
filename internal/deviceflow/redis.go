@@ -42,7 +42,7 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 
 	// Use a transaction to set both device and user code keys
 	pipe := s.client.Pipeline()
-	
+
 	// Set the device code
 	deviceKey := devicePrefix + code.DeviceCode
 	pipe.Set(ctx, deviceKey, data, ttl)

@@ -12,12 +12,12 @@ import (
 
 // Common errors
 var (
-	ErrInvalidDeviceCode   = errors.New("invalid device code")
-	ErrInvalidUserCode     = errors.New("invalid user code")
+	ErrInvalidDeviceCode    = errors.New("invalid device code")
+	ErrInvalidUserCode      = errors.New("invalid user code")
 	ErrPendingAuthorization = errors.New("authorization pending")
-	ErrSlowDown            = errors.New("polling too frequently")
-	ErrExpiredCode         = errors.New("code expired")
-	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
+	ErrSlowDown             = errors.New("polling too frequently")
+	ErrExpiredCode          = errors.New("code expired")
+	ErrRateLimitExceeded    = errors.New("rate limit exceeded")
 )
 
 // DeviceCode represents the device authorization details
@@ -29,7 +29,7 @@ type DeviceCode struct {
 	Interval        int       `json:"interval"`
 	ClientID        string    `json:"client_id"`
 	Scope           string    `json:"scope,omitempty"`
-	LastPoll       time.Time `json:"last_poll"`
+	LastPoll        time.Time `json:"last_poll"`
 }
 
 // TokenResponse represents the OAuth2 token response
@@ -228,7 +228,7 @@ func generateSecureCode(length int) (string, error) {
 
 func generateUserCode(length int) (string, error) {
 	const charset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters
-	
+
 	if length < 4 || length%2 != 0 {
 		return "", errors.New("invalid user code length")
 	}
