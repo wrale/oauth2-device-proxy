@@ -3,6 +3,7 @@ package templates
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -11,6 +12,13 @@ import (
 
 //go:embed html/*.html
 var content embed.FS
+
+// Required template definitions that must be present
+var requiredDefinitions = []string{
+	"layout",
+	"content",
+	"title",
+}
 
 // Templates manages the HTML templates
 type Templates struct {
@@ -23,6 +31,7 @@ type Templates struct {
 type TemplateError struct {
 	Cause   error
 	Message string
+	Code    int
 }
 
 func (e *TemplateError) Error() string {
@@ -31,6 +40,21 @@ func (e *TemplateError) Error() string {
 
 func (e *TemplateError) Unwrap() error {
 	return e.Cause
+}
+
+// validateTemplate ensures a template has all required definitions
+func validateTemplate(tmpl *template.Template) error {
+	if tmpl == nil {
+		return fmt.Errorf("template is nil")
+	}
+
+	for _, required := range requiredDefinitions {
+		if lookup := tmpl.Lookup(required); lookup == nil {
+			return fmt.Errorf("missing required template definition %q", required)
+		}
+	}
+
+	return nil
 }
 
 // LoadTemplates loads and parses all HTML templates
@@ -42,15 +66,24 @@ func LoadTemplates() (*Templates, error) {
 	if t.verify, err = template.ParseFS(content, "html/verify.html", "html/layout.html"); err != nil {
 		return nil, fmt.Errorf("parsing verify template: %w", err)
 	}
+	if err = validateTemplate(t.verify); err != nil {
+		return nil, fmt.Errorf("validating verify template: %w", err)
+	}
 
 	// Load complete page template
 	if t.complete, err = template.ParseFS(content, "html/complete.html", "html/layout.html"); err != nil {
 		return nil, fmt.Errorf("parsing complete template: %w", err)
 	}
+	if err = validateTemplate(t.complete); err != nil {
+		return nil, fmt.Errorf("validating complete template: %w", err)
+	}
 
 	// Load error page template
 	if t.error, err = template.ParseFS(content, "html/error.html", "html/layout.html"); err != nil {
 		return nil, fmt.Errorf("parsing error template: %w", err)
+	}
+	if err = validateTemplate(t.error); err != nil {
+		return nil, fmt.Errorf("validating error template: %w", err)
 	}
 
 	return t, nil
@@ -114,7 +147,15 @@ type VerifyData struct {
 func (t *Templates) RenderVerify(w http.ResponseWriter, data VerifyData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.verify, data); err != nil {
-		if renderErr := t.renderError(w, "Unable to display verification page", err); renderErr != nil {
+		var templateErr *TemplateError
+		if errors.As(err, &templateErr) {
+			if renderErr := t.renderError(w, "Unable to display verification page", templateErr.Code, err); renderErr != nil {
+				return fmt.Errorf("failed to render verify page with fallback error: %w", renderErr)
+			}
+			return err
+		}
+		// If not a TemplateError, treat as internal error
+		if renderErr := t.renderError(w, "Unable to display verification page", http.StatusInternalServerError, err); renderErr != nil {
 			return fmt.Errorf("failed to render verify page with fallback error: %w", renderErr)
 		}
 		return err
@@ -131,7 +172,14 @@ type CompleteData struct {
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.complete, data); err != nil {
-		if renderErr := t.renderError(w, "Unable to display completion page", err); renderErr != nil {
+		var templateErr *TemplateError
+		if errors.As(err, &templateErr) {
+			if renderErr := t.renderError(w, "Unable to display completion page", templateErr.Code, err); renderErr != nil {
+				return fmt.Errorf("failed to render complete page with fallback error: %w", renderErr)
+			}
+			return err
+		}
+		if renderErr := t.renderError(w, "Unable to display completion page", http.StatusInternalServerError, err); renderErr != nil {
 			return fmt.Errorf("failed to render complete page with fallback error: %w", renderErr)
 		}
 		return err
@@ -160,13 +208,17 @@ func (t *Templates) RenderError(w http.ResponseWriter, data ErrorData) error {
 	if err != nil {
 		// If error template fails, fall back to basic error
 		http.Error(w, data.Message, http.StatusInternalServerError)
-		return &TemplateError{Cause: err, Message: "failed to render error template"}
+		return &TemplateError{
+			Cause:   err,
+			Message: "failed to render error template",
+			Code:    http.StatusInternalServerError,
+		}
 	}
 	return nil
 }
 
 // renderError is a helper that creates and renders an error page
-func (t *Templates) renderError(w http.ResponseWriter, message string, cause error) error {
+func (t *Templates) renderError(w http.ResponseWriter, message string, code int, cause error) error {
 	err := t.RenderError(w, ErrorData{
 		Title:   "Error",
 		Message: message,
@@ -174,14 +226,16 @@ func (t *Templates) renderError(w http.ResponseWriter, message string, cause err
 	if err != nil {
 		// Return a wrapped error that includes both the original cause and the error template failure
 		return &TemplateError{
-			Cause:   cause,
-			Message: fmt.Sprintf("template error with fallback failure: %v", err),
+			Cause:   fmt.Errorf("failed to render error page: %w (original error: %v)", err, cause),
+			Message: "template error with fallback failure",
+			Code:    code,
 		}
 	}
 	// Return the original cause wrapped as a template error
 	return &TemplateError{
 		Cause:   cause,
 		Message: "failed to render template",
+		Code:    code,
 	}
 }
 
@@ -198,10 +252,12 @@ func (t *Templates) executeToWriter(w io.Writer, tmpl *template.Template, data i
 		}
 	}
 
+	// Execute template with error wrapping
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		return &TemplateError{
 			Cause:   err,
-			Message: "failed to render template",
+			Message: "failed to execute template",
+			Code:    http.StatusInternalServerError,
 		}
 	}
 	return nil
@@ -211,7 +267,7 @@ func (t *Templates) executeToWriter(w io.Writer, tmpl *template.Template, data i
 func (t *Templates) RenderToString(tmpl *template.Template, data interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := t.executeToWriter(&buf, tmpl, data); err != nil {
-		return "", err
+		return "", fmt.Errorf("rendering template to string: %w", err)
 	}
 	return buf.String(), nil
 }
