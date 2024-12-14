@@ -77,6 +77,11 @@ func (s *server) routes() {
 	s.router.Get("/device/complete", s.handleDeviceComplete())
 }
 
+// ServeHTTP implements http.Handler
+func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.router.ServeHTTP(w, r)
+}
+
 // Helper methods
 
 func (s *server) checkHealth(ctx context.Context) error {
