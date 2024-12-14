@@ -2,6 +2,8 @@ package templates
 
 import (
 	"net/http"
+	"strings"
+	"testing"
 )
 
 // mockResponseWriter implements http.ResponseWriter for testing
