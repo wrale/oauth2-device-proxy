@@ -231,8 +231,8 @@ func TestTemplateErrorHandling(t *testing.T) {
 		t.Fatalf("Failed to create layout template: %v", err)
 	}
 
-	contentTmpl, err := tmpl.New("content").Parse(`{{.NonExistentField.SubField}}`)
-	if err != nil {
+	// Add content template that will fail during execution due to missing field
+	if _, err := tmpl.New("content").Parse(`{{.NonExistentField.SubField}}`); err != nil {
 		t.Fatalf("Failed to create content template: %v", err)
 	}
 
