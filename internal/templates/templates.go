@@ -114,7 +114,9 @@ type VerifyData struct {
 func (t *Templates) RenderVerify(w http.ResponseWriter, data VerifyData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.verify, data); err != nil {
-		t.renderError(w, "Unable to display verification page", err)
+		if renderErr := t.renderError(w, "Unable to display verification page", err); renderErr != nil {
+			return fmt.Errorf("failed to render verify page with fallback error: %w", renderErr)
+		}
 		return err
 	}
 	return nil
@@ -129,7 +131,9 @@ type CompleteData struct {
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.complete, data); err != nil {
-		t.renderError(w, "Unable to display completion page", err)
+		if renderErr := t.renderError(w, "Unable to display completion page", err); renderErr != nil {
+			return fmt.Errorf("failed to render complete page with fallback error: %w", renderErr)
+		}
 		return err
 	}
 	return nil
