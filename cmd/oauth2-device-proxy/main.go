@@ -13,6 +13,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/jmdots/oauth2-device-proxy/internal/csrf"
 	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
 )
 
@@ -48,8 +49,15 @@ func main() {
 		deviceflow.WithRateLimit(time.Minute, cfg.MaxPollsPerMinute),
 	)
 
+	// Initialize CSRF protection
+	csrfStore := csrf.NewRedisStore(redisClient)
+	csrfManager := csrf.NewManager(csrfStore, []byte(cfg.CSRFSecret), cfg.CSRFTokenExpiry)
+
 	// Create and configure server
-	srv := newServer(cfg, flow)
+	srv, err := newServer(cfg, flow, csrfManager)
+	if err != nil {
+		log.Fatalf("Error creating server: %v", err)
+	}
 
 	// Create HTTP server with proper timeout configurations
 	httpServer := &http.Server{
