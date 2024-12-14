@@ -58,6 +58,14 @@ func ValidateUserCode(code string) error {
 		}
 	}
 
+	// Check entropy first since it's the most fundamental requirement
+	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
+		return &ValidationError{
+			Code:    code,
+			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.2f bits", entropy, MinEntropy),
+		}
+	}
+
 	// Check for repeated characters
 	charCounts := make(map[rune]int)
 	maxAllowed := 2 // Stricter limit for better security
@@ -68,14 +76,6 @@ func ValidateUserCode(code string) error {
 				Code:    code,
 				Message: fmt.Sprintf("too many repeated characters: %c appears more than %d times", char, maxAllowed),
 			}
-		}
-	}
-
-	// Check entropy last since it's most expensive
-	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
-		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.2f bits", entropy, MinEntropy),
 		}
 	}
 
