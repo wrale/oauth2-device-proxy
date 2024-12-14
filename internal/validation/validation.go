@@ -10,10 +10,10 @@ import (
 
 // Validation settings
 const (
-	MinLength    = 8 // Minimum total length excluding separator
-	MaxLength    = 8 // Maximum total length excluding separator
-	MinGroupSize = 4 // Minimum characters per group
-	MinEntropy   = 2 // Minimum required entropy bits
+	MinLength    = 8   // Minimum total length excluding separator
+	MaxLength    = 8   // Maximum total length excluding separator
+	MinGroupSize = 4   // Minimum characters per group
+	MinEntropy   = 2.0 // Minimum required entropy bits
 )
 
 // ValidCharset contains the allowed characters for user codes
@@ -75,7 +75,7 @@ func ValidateUserCode(code string) error {
 	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.0f bits", entropy, MinEntropy),
+			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.2f bits", entropy, MinEntropy),
 		}
 	}
 
