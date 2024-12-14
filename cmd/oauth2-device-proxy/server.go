@@ -98,7 +98,7 @@ func (s *server) buildOAuthURL(params map[string]string) string {
 	return s.cfg.OAuth.AuthorizationEndpoint + "?" + values.Encode()
 }
 
-func (s *server) exchangeCode(ctx context.Context, code string) (*deviceflow.TokenResponse, error) {
+func (s *server) exchangeCode(ctx context.Context, code string, deviceCode *deviceflow.DeviceCode) (*deviceflow.TokenResponse, error) {
 	token, err := s.oauth.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("exchanging code: %w", err)
@@ -109,6 +109,6 @@ func (s *server) exchangeCode(ctx context.Context, code string) (*deviceflow.Tok
 		TokenType:    token.TokenType,
 		ExpiresIn:    int(token.Expiry.Sub(time.Now()).Seconds()),
 		RefreshToken: token.RefreshToken,
-		Scope:        strings.Join(token.Scope, " "),
+		Scope:        deviceCode.Scope, // Use the scope from the original device code request
 	}, nil
 }
