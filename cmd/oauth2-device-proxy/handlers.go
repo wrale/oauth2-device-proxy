@@ -107,10 +107,12 @@ func (s *server) handleDeviceVerification() http.HandlerFunc {
 			// Generate CSRF token
 			token, err := s.csrf.GenerateToken(r.Context())
 			if err != nil {
-				s.templates.RenderError(w, templates.ErrorData{
+				if err := s.templates.RenderError(w, templates.ErrorData{
 					Title:   "System Error",
 					Message: "Unable to process request. Please try again.",
-				})
+				}); err != nil {
+					http.Error(w, "error rendering page", http.StatusInternalServerError)
+				}
 				return
 			}
 
@@ -126,20 +128,24 @@ func (s *server) handleDeviceVerification() http.HandlerFunc {
 		case http.MethodPost:
 			// Verify CSRF token
 			if err := s.csrf.ValidateToken(r.Context(), r.PostFormValue("csrf_token")); err != nil {
-				s.templates.RenderError(w, templates.ErrorData{
+				if err := s.templates.RenderError(w, templates.ErrorData{
 					Title:   "Invalid Request",
 					Message: "Please try submitting the form again.",
-				})
+				}); err != nil {
+					http.Error(w, "error rendering page", http.StatusInternalServerError)
+				}
 				return
 			}
 
 			// Get and normalize user code
 			code := strings.TrimSpace(r.PostFormValue("code"))
 			if code == "" {
-				s.templates.RenderVerify(w, templates.VerifyData{
+				if err := s.templates.RenderVerify(w, templates.VerifyData{
 					Error:     "Please enter a code",
 					CSRFToken: r.PostFormValue("csrf_token"),
-				})
+				}); err != nil {
+					http.Error(w, "error rendering page", http.StatusInternalServerError)
+				}
 				return
 			}
 
@@ -158,7 +164,9 @@ func (s *server) handleDeviceVerification() http.HandlerFunc {
 					data.Error = "An error occurred. Please try again."
 				}
 
-				s.templates.RenderVerify(w, data)
+				if err := s.templates.RenderVerify(w, data); err != nil {
+					http.Error(w, "error rendering page", http.StatusInternalServerError)
+				}
 				return
 			}
 
@@ -183,55 +191,67 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deviceCode := r.URL.Query().Get("state")
 		if deviceCode == "" {
-			s.templates.RenderError(w, templates.ErrorData{
+			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Invalid Request",
 				Message: "Missing or invalid state parameter",
-			})
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
 			return
 		}
 
 		authCode := r.URL.Query().Get("code")
 		if authCode == "" {
-			s.templates.RenderError(w, templates.ErrorData{
+			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
 				Message: "No authorization code received",
-			})
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
 			return
 		}
 
 		// Load device code details to preserve scope
 		dCode, err := s.flow.VerifyUserCode(r.Context(), deviceCode)
 		if err != nil {
-			s.templates.RenderError(w, templates.ErrorData{
+			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
 				Message: "Device code verification failed",
-			})
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
 			return
 		}
 
 		// Exchange code for token
 		token, err := s.exchangeCode(r.Context(), authCode, dCode)
 		if err != nil {
-			s.templates.RenderError(w, templates.ErrorData{
+			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
 				Message: "Unable to complete authorization",
-			})
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
 			return
 		}
 
 		// Complete the device authorization
 		if err := s.flow.CompleteAuthorization(r.Context(), deviceCode, token); err != nil {
-			s.templates.RenderError(w, templates.ErrorData{
+			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
 				Message: "Unable to complete device authorization",
-			})
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
 			return
 		}
 
 		// Show success page
-		s.templates.RenderComplete(w, templates.CompleteData{
+		if err := s.templates.RenderComplete(w, templates.CompleteData{
 			Message: "You have successfully authorized the device. You may now close this window.",
-		})
+		}); err != nil {
+			http.Error(w, "error rendering page", http.StatusInternalServerError)
+		}
 	}
 }
 

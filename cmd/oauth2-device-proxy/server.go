@@ -111,7 +111,7 @@ func (s *server) exchangeCode(ctx context.Context, code string, deviceCode *devi
 	return &deviceflow.TokenResponse{
 		AccessToken:  token.AccessToken,
 		TokenType:    token.TokenType,
-		ExpiresIn:    int(token.Expiry.Sub(time.Now()).Seconds()),
+		ExpiresIn:    int(time.Until(token.Expiry).Seconds()), // Updated to use time.Until
 		RefreshToken: token.RefreshToken,
 		Scope:        deviceCode.Scope, // Use the scope from the original device code request
 	}, nil
