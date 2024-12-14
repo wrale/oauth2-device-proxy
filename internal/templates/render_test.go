@@ -225,30 +225,31 @@ func TestRenderToString(t *testing.T) {
 }
 
 func TestTemplateErrorHandling(t *testing.T) {
-	// Create layout template
-	layoutTmpl, err := template.New("layout").Parse(`{{define "layout"}}<!DOCTYPE html>
-<html><body>{{template "content" .}}</body></html>{{end}}`)
-	if err != nil {
-		t.Fatalf("Failed to create layout template: %v", err)
-	}
+	baseLayout := `{{define "layout"}}<!DOCTYPE html>
+<html><head><title>{{template "title" .}}</title></head><body>{{template "content" .}}</body></html>{{end}}`
 
 	// Create error template with complete definitions
-	errorTmpl := template.Must(template.New("layout").Parse(`{{define "layout"}}<!DOCTYPE html>
-<html><body>{{template "content" .}}</body></html>{{end}}`))
+	errorTmpl := template.Must(template.New("layout").Parse(baseLayout))
 	template.Must(errorTmpl.New("title").Parse(`{{define "title"}}Error{{end}}`))
 	template.Must(errorTmpl.New("content").Parse(`{{define "content"}}<h1>{{.Title}}</h1><p>{{.Message}}</p>{{end}}`))
 
 	// Create verify template that will fail during execution
-	verifyTmpl := template.Must(layoutTmpl.Clone())
+	verifyTmpl := template.Must(template.New("layout").Parse(baseLayout))
 	template.Must(verifyTmpl.New("title").Parse(`{{define "title"}}Verify{{end}}`))
 	template.Must(verifyTmpl.New("content").Parse(`{{define "content"}}
 		{{/* Access a field that doesn't exist to trigger execution error */}}
 		{{.NonExistentStruct.Field}}
 	{{end}}`))
 
+	// Create complete template as required by Templates struct
+	completeTmpl := template.Must(template.New("layout").Parse(baseLayout))
+	template.Must(completeTmpl.New("title").Parse(`{{define "title"}}Complete{{end}}`))
+	template.Must(completeTmpl.New("content").Parse(`{{define "content"}}<h1>Complete</h1>{{end}}`))
+
 	templates := &Templates{
-		verify: verifyTmpl,
-		error:  errorTmpl,
+		verify:   verifyTmpl,
+		error:    errorTmpl,
+		complete: completeTmpl,
 	}
 
 	mock := newMockResponseWriter()
@@ -256,7 +257,7 @@ func TestTemplateErrorHandling(t *testing.T) {
 		CSRFToken: "test-token",
 	}
 
-	err = templates.RenderVerify(mock, data)
+	err := templates.RenderVerify(mock, data)
 	if err == nil {
 		t.Fatal("RenderVerify() with error-producing template did not return error")
 	}
