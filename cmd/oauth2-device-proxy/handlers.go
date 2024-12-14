@@ -199,8 +199,18 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 			return
 		}
 
+		// Load device code details to preserve scope
+		dCode, err := s.flow.VerifyUserCode(r.Context(), deviceCode)
+		if err != nil {
+			s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Authorization Failed",
+				Message: "Device code verification failed",
+			})
+			return
+		}
+
 		// Exchange code for token
-		token, err := s.exchangeCode(r.Context(), authCode)
+		token, err := s.exchangeCode(r.Context(), authCode, dCode)
 		if err != nil {
 			s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
