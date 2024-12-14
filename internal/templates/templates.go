@@ -147,11 +147,19 @@ func (t *Templates) renderError(w http.ResponseWriter, message string, cause err
 	})
 }
 
-// RenderToString renders a template to a string
+// executeToWriter executes a template to any io.Writer
+func (t *Templates) executeToWriter(w io.Writer, tmpl *template.Template, data interface{}) error {
+	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
+		return &TemplateError{Cause: err, Message: "failed to render template"}
+	}
+	return nil
+}
+
+// RenderToString renders a template to a string, using io.Writer for template execution
 func (t *Templates) RenderToString(tmpl *template.Template, data interface{}) (string, error) {
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
-		return "", &TemplateError{Cause: err, Message: "failed to render template to string"}
+	if err := t.executeToWriter(&buf, tmpl, data); err != nil {
+		return "", err
 	}
 	return buf.String(), nil
 }
