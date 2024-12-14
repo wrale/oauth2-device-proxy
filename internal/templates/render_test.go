@@ -226,19 +226,20 @@ func TestRenderToString(t *testing.T) {
 
 func TestTemplateErrorHandling(t *testing.T) {
 	templates := setupTemplates(t)
-
 	mock := newMockResponseWriter()
-	data := VerifyData{
-		CSRFToken: "test-token",
-		Error:     "test error", // Valid fields
-		PrefilledCode: func() string {
-			// Function values can't be rendered in templates
-			return "TEST"
-		}(),
+
+	// Create a VerifyData with an unrenderable field (a channel)
+	data := struct {
+		VerifyData
+		UnrenderableField chan int
+	}{
+		VerifyData: VerifyData{
+			CSRFToken: "test-token",
+		},
+		UnrenderableField: make(chan int), // channels cannot be rendered in templates
 	}
 
 	err := templates.RenderVerify(mock, data)
-
 	if err == nil {
 		t.Error("RenderVerify() with invalid data did not return error")
 	}
