@@ -10,10 +10,10 @@ import (
 
 // Validation settings
 const (
-	MinLength    = 8  // Minimum total length excluding separator
-	MaxLength    = 12 // Maximum total length excluding separator
-	MinGroupSize = 4  // Minimum characters per group
-	MinEntropy   = 2  // Minimum required entropy bits
+	MinLength    = 8 // Minimum total length excluding separator
+	MaxLength    = 8 // Maximum total length excluding separator
+	MinGroupSize = 4 // Minimum characters per group
+	MinEntropy   = 2 // Minimum required entropy bits
 )
 
 // ValidCharset contains the allowed characters for user codes
@@ -43,16 +43,10 @@ func ValidateUserCode(code string) error {
 
 	// First check length without separator to give most specific error
 	baseCode := strings.ReplaceAll(code, "-", "")
-	if len(baseCode) < MinLength {
+	if len(baseCode) != MinLength {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
-		}
-	}
-	if len(baseCode) > MaxLength {
-		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
+			Message: fmt.Sprintf("code must be exactly %d characters (excluding separator)", MinLength),
 		}
 	}
 
@@ -66,13 +60,13 @@ func ValidateUserCode(code string) error {
 
 	// Check character distribution before entropy
 	charCounts := make(map[rune]int)
-	maxAllowedRepeats := (len(baseCode) / 2) + 1 // Allow up to half rounded up
+	maxAllowedRepeats := MaxLength/len(ValidCharset) + 2 // Limit based on charset size
 	for _, char := range baseCode {
 		charCounts[char]++
 		if charCounts[char] > maxAllowedRepeats {
 			return &ValidationError{
 				Code:    code,
-				Message: "too many repeated characters",
+				Message: fmt.Sprintf("character %c appears too many times (max %d allowed)", char, maxAllowedRepeats),
 			}
 		}
 	}
