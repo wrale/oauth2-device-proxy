@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"errors"
 	"testing"
 )
 
