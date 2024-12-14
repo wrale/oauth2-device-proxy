@@ -225,20 +225,26 @@ func TestRenderToString(t *testing.T) {
 }
 
 func TestTemplateErrorHandling(t *testing.T) {
-	// Create both layout and error templates to ensure proper error handling
+	// Create layout template with error-producing content
 	layoutTmpl, err := template.New("layout").Parse(`{{define "layout"}}{{template "content" .}}{{end}}`)
 	if err != nil {
 		t.Fatalf("Failed to create layout template: %v", err)
 	}
 
-	// Create error template first since it will be needed for error fallback
-	errorTmpl, err := template.New("layout").Parse(`{{define "layout"}}Error: {{.Message}}{{end}}`)
+	// Create error template with both layout and content definitions
+	errorTmpl := template.New("layout")
+	errorTmpl, err = errorTmpl.Parse(`{{define "layout"}}{{template "content" .}}{{end}}`)
 	if err != nil {
-		t.Fatalf("Failed to create error template: %v", err)
+		t.Fatalf("Failed to create error template layout: %v", err)
+	}
+	_, err = errorTmpl.New("content").Parse(`{{define "content"}}Error: {{.Title}} - {{.Message}}{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to create error template content: %v", err)
 	}
 
 	// Add content template that will fail during execution
-	if _, err := layoutTmpl.New("content").Parse(`{{.NonExistentField.SubField}}`); err != nil {
+	_, err = layoutTmpl.New("content").Parse(`{{define "content"}}{{.NonExistentField.SubField}}{{end}}`)
+	if err != nil {
 		t.Fatalf("Failed to create content template: %v", err)
 	}
 
