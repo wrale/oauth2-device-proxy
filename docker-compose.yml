@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    command: ["start-dev"]  # Use start for production
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password
+      KC_PROXY: edge
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "8081:8080"
+
+  oauth2-device-proxy:
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: device-flow-demo
+      KEYCLOAK_CLIENT_ID: device-proxy
+      KEYCLOAK_CLIENT_SECRET: your_client_secret_here
+      PORT: 8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  device-simulator:
+    image: curlimages/curl:8.5.0
+    command: >
+      sh -c '
+      echo "Device Simulator Starting..." &&
+      while true; do
+        echo "Requesting device code..." &&
+        RESP=$$(curl -s -X POST http://oauth2-device-proxy:8080/device/code \
+          -d "client_id=device-simulator") &&
+        echo "Response: $$RESP" &&
+        CODE=$$(echo $$RESP | jq -r .device_code) &&
+        if [ "$$CODE" != "null" ]; then
+          echo "Got device code: $$CODE" &&
+          echo "User should visit: $$(echo $$RESP | jq -r .verification_uri)" &&
+          echo "And enter code: $$(echo $$RESP | jq -r .user_code)" &&
+          while true; do
+            sleep $$(echo $$RESP | jq -r .interval) &&
+            TOKEN_RESP=$$(curl -s -X POST http://oauth2-device-proxy:8080/device/token \
+              -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
+              -d "client_id=device-simulator" \
+              -d "device_code=$$CODE") &&
+            echo "Token Response: $$TOKEN_RESP" &&
+            if echo $$TOKEN_RESP | jq -e .access_token > /dev/null; then
+              echo "Successfully authenticated!" &&
+              break
+            fi
+          done
+        fi
+        echo "Waiting 30 seconds before next attempt..." &&
+        sleep 30
+      done
+      '
+    depends_on:
+      oauth2-device-proxy:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    driver: bridge
