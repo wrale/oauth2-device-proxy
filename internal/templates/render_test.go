@@ -277,10 +277,7 @@ func TestTemplateErrorHandling(t *testing.T) {
 		t.Errorf("error cause does not mention missing field: %v", cause)
 	}
 
-	// Verify error template successfully rendered
-	if !mock.Written() {
-		t.Error("error template did not write any content")
-	}
+	// Verify error template rendered with expected content
 	if !mock.Contains("Error", "Unable to display verification page") {
 		t.Error("error template missing expected content")
 	}
