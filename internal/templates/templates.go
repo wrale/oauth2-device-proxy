@@ -114,7 +114,8 @@ type VerifyData struct {
 func (t *Templates) RenderVerify(w http.ResponseWriter, data VerifyData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.verify, data); err != nil {
-		return t.renderError(w, "Unable to display verification page", err)
+		t.renderError(w, "Unable to display verification page", err)
+		return err
 	}
 	return nil
 }
@@ -128,7 +129,8 @@ type CompleteData struct {
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.complete, data); err != nil {
-		return t.renderError(w, "Unable to display completion page", err)
+		t.renderError(w, "Unable to display completion page", err)
+		return err
 	}
 	return nil
 }
@@ -161,10 +163,22 @@ func (t *Templates) RenderError(w http.ResponseWriter, data ErrorData) error {
 
 // renderError is a helper that creates and renders an error page
 func (t *Templates) renderError(w http.ResponseWriter, message string, cause error) error {
-	return t.RenderError(w, ErrorData{
+	err := t.RenderError(w, ErrorData{
 		Title:   "Error",
 		Message: message,
 	})
+	if err != nil {
+		// Return a wrapped error that includes both the original cause and the error template failure
+		return &TemplateError{
+			Cause:   cause,
+			Message: fmt.Sprintf("template error with fallback failure: %v", err),
+		}
+	}
+	// Return the original cause wrapped as a template error
+	return &TemplateError{
+		Cause:   cause,
+		Message: "failed to render template",
+	}
 }
 
 // executeToWriter executes a template to any io.Writer
