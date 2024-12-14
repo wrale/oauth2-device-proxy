@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
 )
@@ -21,8 +22,8 @@ func (s *server) handleHealth() http.HandlerFunc {
 			Version: Version,
 		}
 
-		// Check Redis connection
-		if err := s.flow.CheckHealth(r.Context()); err != nil {
+		// Check component health
+		if err := s.checkHealth(r.Context()); err != nil {
 			resp.Status = "degraded"
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
@@ -100,16 +101,126 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 // Device verification page handler
 func (s *server) handleDeviceVerification() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Implement HTML page for code entry
-		http.Error(w, "not implemented", http.StatusNotImplemented)
+		switch r.Method {
+		case http.MethodGet:
+			// Generate CSRF token
+			token, err := s.csrf.GenerateToken(r.Context())
+			if err != nil {
+				s.templates.RenderError(w, templates.ErrorData{
+					Title:   "System Error",
+					Message: "Unable to process request. Please try again.",
+				})
+				return
+			}
+
+			// Render verification page
+			data := templates.VerifyData{
+				PrefilledCode: r.URL.Query().Get("code"),
+				CSRFToken:     token,
+			}
+			if err := s.templates.RenderVerify(w, data); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
+
+		case http.MethodPost:
+			// Verify CSRF token
+			if err := s.csrf.ValidateToken(r.Context(), r.PostFormValue("csrf_token")); err != nil {
+				s.templates.RenderError(w, templates.ErrorData{
+					Title:   "Invalid Request",
+					Message: "Please try submitting the form again.",
+				})
+				return
+			}
+
+			// Get and normalize user code
+			code := strings.TrimSpace(r.PostFormValue("code"))
+			if code == "" {
+				s.templates.RenderVerify(w, templates.VerifyData{
+					Error:     "Please enter a code",
+					CSRFToken: r.PostFormValue("csrf_token"),
+				})
+				return
+			}
+
+			// Verify the code
+			deviceCode, err := s.flow.VerifyUserCode(r.Context(), code)
+			if err != nil {
+				var data templates.VerifyData
+				data.CSRFToken = r.PostFormValue("csrf_token")
+
+				switch {
+				case errors.Is(err, deviceflow.ErrInvalidUserCode):
+					data.Error = "Invalid code. Please check and try again."
+				case errors.Is(err, deviceflow.ErrExpiredCode):
+					data.Error = "This code has expired. Please request a new code from your device."
+				default:
+					data.Error = "An error occurred. Please try again."
+				}
+
+				s.templates.RenderVerify(w, data)
+				return
+			}
+
+			// Redirect to OAuth provider
+			params := map[string]string{
+				"response_type": "code",
+				"client_id":     deviceCode.ClientID,
+				"redirect_uri":  s.cfg.BaseURL + "/device/complete",
+				"state":         deviceCode.DeviceCode,
+			}
+			if deviceCode.Scope != "" {
+				params["scope"] = deviceCode.Scope
+			}
+
+			http.Redirect(w, r, s.buildOAuthURL(params), http.StatusFound)
+		}
 	}
 }
 
 // Device complete page handler
 func (s *server) handleDeviceComplete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Implement success page
-		http.Error(w, "not implemented", http.StatusNotImplemented)
+		deviceCode := r.URL.Query().Get("state")
+		if deviceCode == "" {
+			s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Invalid Request",
+				Message: "Missing or invalid state parameter",
+			})
+			return
+		}
+
+		authCode := r.URL.Query().Get("code")
+		if authCode == "" {
+			s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Authorization Failed",
+				Message: "No authorization code received",
+			})
+			return
+		}
+
+		// Exchange code for token
+		token, err := s.exchangeCode(r.Context(), authCode)
+		if err != nil {
+			s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Authorization Failed",
+				Message: "Unable to complete authorization",
+			})
+			return
+		}
+
+		// Complete the device authorization
+		if err := s.flow.CompleteAuthorization(r.Context(), deviceCode, token); err != nil {
+			s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Authorization Failed",
+				Message: "Unable to complete device authorization",
+			})
+			return
+		}
+
+		// Show success page
+		s.templates.RenderComplete(w, templates.CompleteData{
+			Message: "You have successfully authorized the device. You may now close this window.",
+		})
 	}
 }
 
