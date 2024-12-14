@@ -1,7 +1,6 @@
 package templates
 
 import (
-	"bytes"
 	"errors"
 	"html/template"
 	"net/http"
