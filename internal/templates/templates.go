@@ -29,6 +29,10 @@ func (e *TemplateError) Error() string {
 	return fmt.Sprintf("template error: %s: %v", e.Message, e.Cause)
 }
 
+func (e *TemplateError) Unwrap() error {
+	return e.Cause
+}
+
 // LoadTemplates loads and parses all HTML templates
 func LoadTemplates() (*Templates, error) {
 	t := &Templates{}
@@ -55,8 +59,9 @@ func LoadTemplates() (*Templates, error) {
 // SafeWriter wraps an http.ResponseWriter to handle template errors
 type SafeWriter struct {
 	http.ResponseWriter
-	templates *Templates
-	written   bool
+	templates  *Templates
+	written    bool
+	statusCode int
 }
 
 // NewSafeWriter creates a new SafeWriter
@@ -64,11 +69,20 @@ func (t *Templates) NewSafeWriter(w http.ResponseWriter) *SafeWriter {
 	return &SafeWriter{
 		ResponseWriter: w,
 		templates:      t,
+		statusCode:     http.StatusOK,
 	}
+}
+
+// Written returns whether the response has been written to
+func (w *SafeWriter) Written() bool {
+	return w.written
 }
 
 // Write implements io.Writer
 func (w *SafeWriter) Write(b []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(w.statusCode)
+	}
 	w.written = true
 	return w.ResponseWriter.Write(b)
 }
@@ -76,7 +90,16 @@ func (w *SafeWriter) Write(b []byte) (int, error) {
 // WriteHeader implements http.ResponseWriter
 func (w *SafeWriter) WriteHeader(statusCode int) {
 	if !w.written {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.ResponseWriter.WriteHeader(statusCode)
+		w.written = true
+	}
+}
+
+// SetStatusCode sets the HTTP status code if not already written
+func (w *SafeWriter) SetStatusCode(code int) {
+	if !w.written {
+		w.statusCode = code
 	}
 }
 
@@ -90,7 +113,7 @@ type VerifyData struct {
 // RenderVerify renders the code verification page
 func (t *Templates) RenderVerify(w http.ResponseWriter, data VerifyData) error {
 	sw := t.NewSafeWriter(w)
-	if err := t.verify.ExecuteTemplate(sw, "layout", data); err != nil {
+	if err := t.executeToWriter(sw, t.verify, data); err != nil {
 		return t.renderError(w, "Unable to display verification page", err)
 	}
 	return nil
@@ -104,7 +127,7 @@ type CompleteData struct {
 // RenderComplete renders the completion page
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
 	sw := t.NewSafeWriter(w)
-	if err := t.complete.ExecuteTemplate(sw, "layout", data); err != nil {
+	if err := t.executeToWriter(sw, t.complete, data); err != nil {
 		return t.renderError(w, "Unable to display completion page", err)
 	}
 	return nil
@@ -123,14 +146,11 @@ func (t *Templates) RenderError(w http.ResponseWriter, data ErrorData) error {
 		w = sw.ResponseWriter
 	}
 
-	// Ensure headers haven't been written
-	if sw, ok := w.(interface{ Written() bool }); !ok || !sw.Written() {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-	}
+	sw := t.NewSafeWriter(w)
+	sw.SetStatusCode(http.StatusBadRequest)
 
 	// Try to render the error template
-	err := t.error.ExecuteTemplate(w, "layout", data)
+	err := t.executeToWriter(sw, t.error, data)
 	if err != nil {
 		// If error template fails, fall back to basic error
 		http.Error(w, data.Message, http.StatusInternalServerError)
@@ -149,13 +169,27 @@ func (t *Templates) renderError(w http.ResponseWriter, message string, cause err
 
 // executeToWriter executes a template to any io.Writer
 func (t *Templates) executeToWriter(w io.Writer, tmpl *template.Template, data interface{}) error {
+	// Handle HTTP response writer
+	if hw, ok := w.(http.ResponseWriter); ok {
+		if sw, ok := w.(*SafeWriter); !ok {
+			// Wrap raw http.ResponseWriter in SafeWriter
+			w = t.NewSafeWriter(hw)
+		} else if !sw.Written() {
+			// Ensure headers are written
+			sw.WriteHeader(sw.statusCode)
+		}
+	}
+
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
-		return &TemplateError{Cause: err, Message: "failed to render template"}
+		return &TemplateError{
+			Cause:   err,
+			Message: "failed to render template",
+		}
 	}
 	return nil
 }
 
-// RenderToString renders a template to a string, using io.Writer for template execution
+// RenderToString renders a template to a string
 func (t *Templates) RenderToString(tmpl *template.Template, data interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := t.executeToWriter(&buf, tmpl, data); err != nil {
