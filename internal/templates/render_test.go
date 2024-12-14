@@ -225,23 +225,27 @@ func TestRenderToString(t *testing.T) {
 }
 
 func TestTemplateErrorHandling(t *testing.T) {
-	templates := setupTemplates(t)
-	mock := newMockResponseWriter()
-
-	// Create a VerifyData with an unrenderable field (a channel)
-	data := struct {
-		VerifyData
-		UnrenderableField chan int
-	}{
-		VerifyData: VerifyData{
-			CSRFToken: "test-token",
-		},
-		UnrenderableField: make(chan int), // channels cannot be rendered in templates
+	// Create a Templates instance with an invalid template that will fail execution
+	tmpl := template.New("invalid")
+	tmpl, err := tmpl.Parse("{{.UndefinedField.Invalid}}")
+	if err != nil {
+		t.Fatalf("Failed to create invalid template: %v", err)
 	}
 
-	err := templates.RenderVerify(mock, data)
+	templates := &Templates{
+		verify: tmpl, // Replace verify template with invalid one
+	}
+
+	mock := newMockResponseWriter()
+
+	// Use valid VerifyData but invalid template
+	data := VerifyData{
+		CSRFToken: "test-token",
+	}
+
+	err = templates.RenderVerify(mock, data)
 	if err == nil {
-		t.Error("RenderVerify() with invalid data did not return error")
+		t.Error("RenderVerify() with invalid template did not return error")
 	}
 
 	var templateErr *TemplateError
