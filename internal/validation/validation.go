@@ -3,7 +3,7 @@ package validation
 
 import (
 	"fmt"
-	"math/bits"
+	"math"
 	"regexp"
 	"strings"
 )
@@ -13,7 +13,7 @@ const (
 	MinLength    = 8  // Minimum total length excluding separator
 	MaxLength    = 12 // Maximum total length excluding separator
 	MinGroupSize = 4  // Minimum characters per group
-	MinEntropy   = 20 // Minimum required entropy bits
+	MinEntropy   = 2  // Minimum required entropy bits
 )
 
 // ValidCharset contains the allowed characters for user codes
@@ -61,7 +61,7 @@ func ValidateUserCode(code string) error {
 	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("code entropy %f bits is below required minimum %d bits", entropy, MinEntropy),
+			Message: fmt.Sprintf("code entropy %.2f bits is below required minimum %d bits", entropy, MinEntropy),
 		}
 	}
 
@@ -97,7 +97,7 @@ func calculateEntropy(code string) float64 {
 	entropy := 0.0
 	for _, count := range freqs {
 		prob := float64(count) / length
-		entropy -= prob * float64(bits.TrailingZeros64(uint64(prob)))
+		entropy -= prob * math.Log2(prob)
 	}
 
 	return entropy
