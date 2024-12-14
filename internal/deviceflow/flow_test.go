@@ -202,45 +202,49 @@ func TestRequestDeviceCode(t *testing.T) {
 func TestVerifyUserCode(t *testing.T) {
 	tests := []struct {
 		name     string
-		setup    func(*mockStore)
+		setup    func(*testing.T, *mockStore)
 		userCode string
 		wantErr  error
 	}{
 		{
 			name: "valid code",
-			setup: func(s *mockStore) {
+			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
 					UserCode:   "ABCD-EFGH",
 					ExpiresAt:  time.Now().Add(10 * time.Minute),
 				}
-				s.SaveDeviceCode(context.Background(), code)
+				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
+					t.Fatalf("failed to setup test: %v", err)
+				}
 			},
 			userCode: "ABCD-EFGH",
 			wantErr:  nil,
 		},
 		{
 			name:     "invalid code",
-			setup:    func(s *mockStore) {},
+			setup:    func(t *testing.T, s *mockStore) {},
 			userCode: "XXXX-YYYY",
 			wantErr:  ErrInvalidUserCode,
 		},
 		{
 			name: "expired code",
-			setup: func(s *mockStore) {
+			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
 					UserCode:   "ABCD-EFGH",
 					ExpiresAt:  time.Now().Add(-1 * time.Minute),
 				}
-				s.SaveDeviceCode(context.Background(), code)
+				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
+					t.Fatalf("failed to setup test: %v", err)
+				}
 			},
 			userCode: "ABCD-EFGH",
 			wantErr:  ErrExpiredCode,
 		},
 		{
 			name: "store error",
-			setup: func(s *mockStore) {
+			setup: func(t *testing.T, s *mockStore) {
 				s.healthy = false
 			},
 			userCode: "ABCD-EFGH",
@@ -252,7 +256,7 @@ func TestVerifyUserCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := newMockStore()
 			if tt.setup != nil {
-				tt.setup(store)
+				tt.setup(t, store)
 			}
 
 			flow := NewFlow(store, "https://example.com")
