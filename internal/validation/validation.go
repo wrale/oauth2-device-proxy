@@ -20,9 +20,10 @@ const (
 const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters
 
 var (
-	// Format validation regex
-	codeRegex = regexp.MustCompile(fmt.Sprintf("^[%s]{%d,}-[%s]{%d,}$",
-		ValidCharset, MinGroupSize, ValidCharset, MinGroupSize))
+	// Format validation regex - enforces exact format with valid charset
+	charsetPattern = fmt.Sprintf("[%s]", ValidCharset)
+	codeRegex      = regexp.MustCompile(fmt.Sprintf("^%s{%d}-%s{%d}$",
+		charsetPattern, MinGroupSize, charsetPattern, MinGroupSize))
 )
 
 // ValidationError represents a code validation error
@@ -40,7 +41,22 @@ func ValidateUserCode(code string) error {
 	// Normalize code
 	code = strings.ToUpper(strings.TrimSpace(code))
 
-	// Check basic format
+	// First check length without separator to give most specific error
+	baseCode := strings.ReplaceAll(code, "-", "")
+	if len(baseCode) < MinLength {
+		return &ValidationError{
+			Code:    code,
+			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
+		}
+	}
+	if len(baseCode) > MaxLength {
+		return &ValidationError{
+			Code:    code,
+			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
+		}
+	}
+
+	// Check format and allowed characters
 	if !codeRegex.MatchString(code) {
 		return &ValidationError{
 			Code:    code,
@@ -48,32 +64,24 @@ func ValidateUserCode(code string) error {
 		}
 	}
 
-	// Check length without separator
-	baseCode := strings.ReplaceAll(code, "-", "")
-	if len(baseCode) < MinLength || len(baseCode) > MaxLength {
-		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("code length must be between %d and %d characters", MinLength, MaxLength),
+	// Check character distribution before entropy
+	charCounts := make(map[rune]int)
+	maxAllowedRepeats := (len(baseCode) / 2) + 1 // Allow up to half rounded up
+	for _, char := range baseCode {
+		charCounts[char]++
+		if charCounts[char] > maxAllowedRepeats {
+			return &ValidationError{
+				Code:    code,
+				Message: "too many repeated characters",
+			}
 		}
 	}
 
-	// Check entropy
+	// Check entropy last since it's most expensive
 	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
 		return &ValidationError{
 			Code:    code,
 			Message: fmt.Sprintf("code entropy %.2f bits is below required minimum %d bits", entropy, MinEntropy),
-		}
-	}
-
-	// Check character distribution
-	charCounts := make(map[rune]int)
-	for _, char := range baseCode {
-		charCounts[char]++
-		if charCounts[char] > len(baseCode)/2 {
-			return &ValidationError{
-				Code:    code,
-				Message: "code contains too many repeated characters",
-			}
 		}
 	}
 
@@ -92,7 +100,7 @@ func calculateEntropy(code string) float64 {
 		freqs[char]++
 	}
 
-	// Calculate entropy
+	// Calculate Shannon entropy
 	length := float64(len(code))
 	entropy := 0.0
 	for _, count := range freqs {
