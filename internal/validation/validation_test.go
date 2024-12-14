@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// TestValidateUserCode verifies the code validation rules in order of precedence:
+// 1. Basic format (length, charset, structure)
+// 2. Entropy requirements (fundamental security property)
+// 3. Repeated character limits (additional security constraint)
 func TestValidateUserCode(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -48,16 +52,22 @@ func TestValidateUserCode(t *testing.T) {
 			errMsg:  "must be in format",
 		},
 		{
-			name:    "repeated characters",
+			name:    "low entropy - repeating pairs",
 			code:    "BBBB-CCCC",
 			wantErr: true,
-			errMsg:  "too many repeated characters",
+			errMsg:  "entropy", // Primary validation failure is entropy
 		},
 		{
-			name:    "low entropy",
+			name:    "low entropy - alternating pattern",
 			code:    "BCBC-BCBC",
 			wantErr: true,
 			errMsg:  "entropy",
+		},
+		{
+			name:    "repeated chars with sufficient entropy",
+			code:    "BBBK-LMNN", // Good entropy but too many B's
+			wantErr: true,
+			errMsg:  "too many repeated characters",
 		},
 		{
 			name:    "with whitespace",
