@@ -2,8 +2,11 @@ package templates
 
 import (
 	"bytes"
+	"errors"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
