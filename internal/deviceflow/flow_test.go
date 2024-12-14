@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// ErrStoreUnhealthy indicates the store is not available
+var ErrStoreUnhealthy = errors.New("store unhealthy")
+
 // mockStore implements Store interface for testing
 type mockStore struct {
 	deviceCodes map[string]*DeviceCode
@@ -27,7 +30,7 @@ func newMockStore() *mockStore {
 
 func (m *mockStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error {
 	if !m.healthy {
-		return errors.New("store unhealthy")
+		return ErrStoreUnhealthy
 	}
 	m.deviceCodes[code.DeviceCode] = code
 	m.userCodes[normalizeCode(code.UserCode)] = code.DeviceCode
@@ -36,7 +39,7 @@ func (m *mockStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error 
 
 func (m *mockStore) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error) {
 	if !m.healthy {
-		return nil, errors.New("store unhealthy")
+		return nil, ErrStoreUnhealthy
 	}
 	code, exists := m.deviceCodes[deviceCode]
 	if !exists {
@@ -47,7 +50,7 @@ func (m *mockStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Devi
 
 func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
 	if !m.healthy {
-		return nil, errors.New("store unhealthy")
+		return nil, ErrStoreUnhealthy
 	}
 	deviceCode, exists := m.userCodes[normalizeCode(userCode)]
 	if !exists {
@@ -58,7 +61,7 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 
 func (m *mockStore) SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	if !m.healthy {
-		return errors.New("store unhealthy")
+		return ErrStoreUnhealthy
 	}
 	m.tokens[deviceCode] = token
 	return nil
@@ -66,7 +69,7 @@ func (m *mockStore) SaveToken(ctx context.Context, deviceCode string, token *Tok
 
 func (m *mockStore) GetToken(ctx context.Context, deviceCode string) (*TokenResponse, error) {
 	if !m.healthy {
-		return nil, errors.New("store unhealthy")
+		return nil, ErrStoreUnhealthy
 	}
 	token, exists := m.tokens[deviceCode]
 	if !exists {
@@ -77,7 +80,7 @@ func (m *mockStore) GetToken(ctx context.Context, deviceCode string) (*TokenResp
 
 func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) error {
 	if !m.healthy {
-		return errors.New("store unhealthy")
+		return ErrStoreUnhealthy
 	}
 	code, exists := m.deviceCodes[deviceCode]
 	if !exists {
@@ -91,7 +94,7 @@ func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) err
 
 func (m *mockStore) CheckHealth(ctx context.Context) error {
 	if !m.healthy {
-		return errors.New("store unhealthy")
+		return ErrStoreUnhealthy
 	}
 	return nil
 }
@@ -248,7 +251,7 @@ func TestVerifyUserCode(t *testing.T) {
 				s.healthy = false
 			},
 			userCode: "ABCD-EFGH",
-			wantErr:  errors.New("store unhealthy"),
+			wantErr:  ErrStoreUnhealthy,
 		},
 	}
 
@@ -266,7 +269,7 @@ func TestVerifyUserCode(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if !errors.Is(err, tt.wantErr) && err.Error() != tt.wantErr.Error() {
+				if !errors.Is(err, tt.wantErr) {
 					t.Errorf("expected error %v, got %v", tt.wantErr, err)
 				}
 			} else {
