@@ -1,0 +1,16 @@
+{{define "title"}}Authorization Complete{{end}}
+
+{{define "content"}}
+<h1>Device Authorized</h1>
+
+<p>{{if .Message}}
+    {{.Message}}
+{{else}}
+    You have successfully authorized the device. You can now return to your device to continue.
+{{end}}</p>
+
+<script>
+    // Replace the current history entry to prevent back button navigation
+    window.history.replaceState({}, '', '/device/complete');
+</script>
+{{end}}

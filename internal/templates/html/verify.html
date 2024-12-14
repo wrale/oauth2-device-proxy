@@ -1,0 +1,58 @@
+{{define "title"}}Enter Code{{end}}
+
+{{define "content"}}
+<h1>Enter Device Code</h1>
+
+<p>Enter the code shown on your device to continue</p>
+
+{{if .Error}}
+<div class="error">{{.Error}}</div>
+{{end}}
+
+<form method="POST" action="/device/verify">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    
+    <div class="code-input">
+        <input type="text" 
+               name="code"
+               id="code"
+               value="{{.PrefilledCode}}"
+               placeholder="XXXX-XXXX"
+               pattern="[A-Za-z0-9]{4}-[A-Za-z0-9]{4}"
+               maxlength="9"
+               autocomplete="off"
+               required>
+    </div>
+
+    <button type="submit">Verify Code</button>
+</form>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const input = document.getElementById('code');
+        
+        // Focus the input on page load
+        input.focus();
+
+        // Auto-format the code with a hyphen
+        input.addEventListener('input', function(e) {
+            let val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+            if (val.length > 4) {
+                val = val.slice(0, 4) + '-' + val.slice(4);
+            }
+            e.target.value = val;
+        });
+
+        // Handle paste events
+        input.addEventListener('paste', function(e) {
+            e.preventDefault();
+            let pasted = (e.clipboardData || window.clipboardData).getData('text');
+            let cleaned = pasted.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+            if (cleaned.length > 4) {
+                cleaned = cleaned.slice(0, 4) + '-' + cleaned.slice(4);
+            }
+            e.target.value = cleaned;
+        });
+    });
+</script>
+{{end}}
