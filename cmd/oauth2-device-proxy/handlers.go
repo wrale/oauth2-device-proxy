@@ -124,5 +124,5 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 func writeError(w http.ResponseWriter, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(map[string]string{"error": code})
+	writeJSON(w, map[string]string{"error": code})
 }
