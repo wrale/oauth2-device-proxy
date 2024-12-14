@@ -23,4 +23,7 @@ type Store interface {
 
 	// DeleteDeviceCode removes a device code and its associated data
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
+
+	// CheckHealth verifies the storage backend is healthy
+	CheckHealth(ctx context.Context) error
 }

@@ -212,6 +212,11 @@ func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, tok
 	return nil
 }
 
+// CheckHealth verifies the flow manager's storage backend is healthy
+func (f *Flow) CheckHealth(ctx context.Context) error {
+	return f.store.CheckHealth(ctx)
+}
+
 // Helper functions
 
 func (f *Flow) canPoll(lastPoll time.Time) bool {
