@@ -1,0 +1,100 @@
+graph TD
+    %% Main Application Entry Point
+    main["/cmd/oauth2-device-proxy/main.go:<br>Server binary with health checks"]
+
+    %% Core Device Flow Package
+    dev1["/internal/deviceflow/flow.go:<br>Core device flow logic"]
+    dev2["/internal/deviceflow/store.go:<br>Storage interface"]
+    dev3["/internal/deviceflow/redis.go:<br>Redis implementation"]
+    dev4["/internal/deviceflow/flow_test.go:<br>Flow unit tests"]
+
+    %% HTTP Server and Handlers
+    srv1["/internal/server/server.go:<br>HTTP server setup"]
+    srv2["/internal/server/device.go:<br>Device flow endpoints"]
+    srv3["/internal/server/admin.go:<br>Admin interface"]
+    srv4["/internal/server/metrics.go:<br>Prometheus metrics"]
+    srv5["/internal/server/health.go:<br>Health checks"]
+
+    %% Configuration and Environment
+    cfg1["/internal/config/config.go:<br>Configuration types"]
+    cfg2["/internal/config/env.go:<br>Environment loading"]
+
+    %% OAuth Integration
+    oauth1["/internal/oauth/keycloak.go:<br>Keycloak client"]
+    oauth2["/internal/oauth/types.go:<br>OAuth types"]
+
+    %% Example Device Implementations
+    ex1["/examples/device/main.go:<br>Example device flow"]
+    ex2["/examples/device/README.md:<br>Implementation guide"]
+
+    %% Integration Tests
+    test1["/test/integration_test.go:<br>Integration suite"]
+
+    %% Dependencies
+    main --> srv1
+    main --> cfg1
+    
+    srv1 --> dev1
+    srv1 --> oauth1
+    
+    dev1 --> dev2
+    dev2 --> dev3
+    
+    srv2 --> dev1
+    srv3 --> dev1
+    srv4 --> dev1
+    
+    oauth1 --> oauth2
+
+    %% Notes for Key Components
+    note1["Device Flow Package:<br>- Core business logic<br>- Redis integration<br>- Interface-driven design"]
+    note2["Server Package:<br>- HTTP handlers<br>- Admin UI<br>- Metrics & health<br>- Integration points"]
+    note3["Configuration:<br>- Environment-based<br>- Keycloak integration<br>- Redis settings"]
+
+    %% Documentation Nodes
+    doc1["/docs/device-flow.md:<br>Flow documentation"]
+    doc2["/docs/configuration.md:<br>Config reference"]
+    doc3["/docs/metrics.md:<br>Metrics documentation"]
+
+    style note1 fill:#f9f,stroke:#333,stroke-width:2px
+    style note2 fill:#f9f,stroke:#333,stroke-width:2px
+    style note3 fill:#f9f,stroke:#333,stroke-width:2px
+
+    %% Package Descriptions
+    subgraph Core["Core Packages"]
+        dev1
+        dev2
+        dev3
+        dev4
+    end
+
+    subgraph Server["Server Components"]
+        srv1
+        srv2
+        srv3
+        srv4
+        srv5
+    end
+
+    subgraph Config["Configuration"]
+        cfg1
+        cfg2
+    end
+
+    subgraph OAuth["OAuth Provider"]
+        oauth1
+        oauth2
+    end
+
+    subgraph Examples["Examples"]
+        ex1
+        ex2
+    end
+
+    %% Key Design Notes
+    classDef note fill:#ff9,stroke:#333,stroke-width:1px
+    class note1,note2,note3 note
+
+    %% Implementation Details
+    classDef impl fill:#f9f,stroke:#333,stroke-width:1px
+    class dev1,srv1,oauth1 impl
