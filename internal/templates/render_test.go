@@ -225,59 +225,63 @@ func TestRenderToString(t *testing.T) {
 }
 
 func TestTemplateErrorHandling(t *testing.T) {
-	// Create layout template with error-producing content
-	layoutTmpl, err := template.New("layout").Parse(`{{define "layout"}}{{template "content" .}}{{end}}`)
+	// Create layout template
+	layoutTmpl, err := template.New("layout").Parse(`{{define "layout"}}<!DOCTYPE html>
+<html><body>{{template "content" .}}</body></html>{{end}}`)
 	if err != nil {
 		t.Fatalf("Failed to create layout template: %v", err)
 	}
 
-	// Create error template with both layout and content definitions
-	errorTmpl := template.New("layout")
-	errorTmpl, err = errorTmpl.Parse(`{{define "layout"}}{{template "content" .}}{{end}}`)
-	if err != nil {
-		t.Fatalf("Failed to create error template layout: %v", err)
-	}
-	_, err = errorTmpl.New("content").Parse(`{{define "content"}}Error: {{.Title}} - {{.Message}}{{end}}`)
-	if err != nil {
-		t.Fatalf("Failed to create error template content: %v", err)
-	}
+	// Create error template with complete definitions
+	errorTmpl := template.Must(template.New("layout").Parse(`{{define "layout"}}<!DOCTYPE html>
+<html><body>{{template "content" .}}</body></html>{{end}}`))
+	template.Must(errorTmpl.New("title").Parse(`{{define "title"}}Error{{end}}`))
+	template.Must(errorTmpl.New("content").Parse(`{{define "content"}}<h1>{{.Title}}</h1><p>{{.Message}}</p>{{end}}`))
 
-	// Add content template that will fail during execution
-	_, err = layoutTmpl.New("content").Parse(`{{define "content"}}{{.NonExistentField.SubField}}{{end}}`)
-	if err != nil {
-		t.Fatalf("Failed to create content template: %v", err)
-	}
+	// Create verify template that will fail during execution
+	verifyTmpl := template.Must(layoutTmpl.Clone())
+	template.Must(verifyTmpl.New("title").Parse(`{{define "title"}}Verify{{end}}`))
+	template.Must(verifyTmpl.New("content").Parse(`{{define "content"}}
+		{{/* Access a field that doesn't exist to trigger execution error */}}
+		{{.NonExistentStruct.Field}}
+	{{end}}`))
 
 	templates := &Templates{
-		verify: layoutTmpl,
+		verify: verifyTmpl,
 		error:  errorTmpl,
 	}
 
 	mock := newMockResponseWriter()
-
-	// Use valid VerifyData but the template will fail during execution
 	data := VerifyData{
 		CSRFToken: "test-token",
 	}
 
 	err = templates.RenderVerify(mock, data)
 	if err == nil {
-		t.Error("RenderVerify() with error-producing template did not return error")
+		t.Fatal("RenderVerify() with error-producing template did not return error")
 	}
 
-	// Verify error type and contents
 	var templateErr *TemplateError
 	if !errors.As(err, &templateErr) {
-		t.Errorf("error was not *TemplateError, got %T", err)
+		t.Fatalf("error was not *TemplateError, got %T", err)
 	}
 
-	// Verify the error message indicates a template execution error
-	if !strings.Contains(templateErr.Error(), "failed to render template") {
-		t.Errorf("unexpected error message: %v", templateErr.Error())
+	// Verify error details
+	if !strings.Contains(templateErr.Message, "failed to render template") {
+		t.Errorf("unexpected error message: %v", templateErr.Message)
 	}
 
-	// Verify the wrapped error contains details about the missing field
-	if !strings.Contains(templateErr.Cause.Error(), "NonExistentField") {
-		t.Errorf("cause does not mention missing field: %v", templateErr.Cause)
+	// Verify cause mentions missing field
+	cause := templateErr.Unwrap()
+	if !strings.Contains(cause.Error(), "NonExistentStruct") {
+		t.Errorf("error cause does not mention missing field: %v", cause)
+	}
+
+	// Verify error template successfully rendered
+	if !mock.Written() {
+		t.Error("error template did not write any content")
+	}
+	if !mock.Contains("Error", "Unable to display verification page") {
+		t.Error("error template missing expected content")
 	}
 }
