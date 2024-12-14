@@ -13,4 +13,10 @@ type Config struct {
 	PollInterval      time.Duration `envconfig:"POLL_INTERVAL" default:"5s"`
 	MaxPollsPerMinute int           `envconfig:"MAX_POLLS_PER_MINUTE" default:"12"`
 	BaseURL           string        `envconfig:"BASE_URL" required:"true"`
+
+	// HTTP Server Timeouts
+	ReadHeaderTimeout time.Duration `envconfig:"READ_HEADER_TIMEOUT" default:"10s"`
+	ReadTimeout       time.Duration `envconfig:"READ_TIMEOUT" default:"30s"`
+	WriteTimeout      time.Duration `envconfig:"WRITE_TIMEOUT" default:"30s"`
+	IdleTimeout       time.Duration `envconfig:"IDLE_TIMEOUT" default:"120s"`
 }

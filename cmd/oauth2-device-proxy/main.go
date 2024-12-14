@@ -51,10 +51,14 @@ func main() {
 	// Create and configure server
 	srv := newServer(cfg, flow)
 
-	// Create HTTP server
+	// Create HTTP server with proper timeout configurations
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: srv.router,
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           srv.router,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
 	// Channel to listen for errors coming from the server
