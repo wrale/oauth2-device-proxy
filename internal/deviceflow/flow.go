@@ -96,7 +96,7 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	// Build verification URIs
 	verificationURI, verificationURIComplete := f.buildVerificationURIs(userCode)
 
-	code := &DeviceCode{
+	return &DeviceCode{
 		DeviceCode:              deviceCode,
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
@@ -107,14 +107,7 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		ClientID:                clientID,
 		Scope:                   scope,
 		LastPoll:                now,
-	}
-
-	// Store the device code state
-	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
-		return nil, fmt.Errorf("saving device code: %w", err)
-	}
-
-	return code, nil
+	}, nil
 }
 
 // GetDeviceCode retrieves and validates a device code per RFC 8628.

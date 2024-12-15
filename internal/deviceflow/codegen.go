@@ -17,11 +17,11 @@ func generateSecureCode(length int) (string, error) {
 	// Each byte becomes 2 hex chars, so divide length by 2 to get bytes needed
 	bytesNeeded := length / 2
 	bytes := make([]byte, bytesNeeded)
-	
+
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("reading random bytes: %w", err)
 	}
-	
+
 	return hex.EncodeToString(bytes), nil
 }
 

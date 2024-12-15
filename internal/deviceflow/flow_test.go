@@ -109,10 +109,10 @@ func (m *mockStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode stri
 	if !m.healthy {
 		return false, ErrStoreUnhealthy
 	}
-	
+
 	// Track verification attempts for this code
 	m.attempts[deviceCode]++
-	
+
 	// RFC 8628 section 5.2 recommends limiting verification attempts
 	maxAttempts := 50
 	return m.attempts[deviceCode] <= maxAttempts, nil
@@ -195,7 +195,7 @@ func TestRequestDeviceCode(t *testing.T) {
 				if code == nil {
 					t.Fatal("expected non-nil DeviceCode")
 				}
-				
+
 				// Run case-specific checks
 				if tt.checkCode != nil {
 					tt.checkCode(t, code)
