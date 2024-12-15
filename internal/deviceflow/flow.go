@@ -117,15 +117,16 @@ func WithRateLimit(window time.Duration, maxPolls int) Option {
 
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
-	// Calculate and validate expiry duration per RFC 8628 section 3.2
+	// Calculate expiry duration per RFC 8628 section 3.2
 	expiresIn := int(f.expiryDuration.Seconds())
-	if expiresIn <= f.userCodeLength*2 {
-		// Double the minimum user code length per RFC 8628
-		expiresIn = f.userCodeLength * 2
+	minDuration := f.userCodeLength * 2 // Minimum duration in seconds
+	if expiresIn < minDuration {
+		expiresIn = minDuration
 	}
 
-	// Calculate expiry timestamp from validated expiresIn
-	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	// Calculate expiry time from validated duration
+	now := time.Now()
+	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
 	// Generate device code
 	deviceCode, err := generateSecureCode(32)
@@ -151,11 +152,11 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: verificationURIComplete,
 		ExpiresIn:               expiresIn, // Required by RFC 8628
-		ExpiresAt:               expiresAt, // Internal tracking
 		Interval:                int(f.pollInterval.Seconds()),
+		ExpiresAt:               expiresAt,
 		ClientID:                clientID,
 		Scope:                   scope,
-		LastPoll:                time.Now(),
+		LastPoll:                now,
 	}
 
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
@@ -174,10 +175,6 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 
 	if code == nil {
 		return nil, ErrInvalidDeviceCode
-	}
-
-	if time.Now().After(code.ExpiresAt) {
-		return nil, ErrExpiredCode
 	}
 
 	// Update ExpiresIn based on remaining time
@@ -202,9 +199,12 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 		return nil, ErrInvalidUserCode
 	}
 
-	if time.Now().After(code.ExpiresAt) {
+	// Update ExpiresIn based on remaining time
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	if remaining <= 0 {
 		return nil, ErrExpiredCode
 	}
+	code.ExpiresIn = int(remaining)
 
 	// Check rate limit for verification attempts per RFC 8628 section 5.2
 	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
@@ -214,13 +214,6 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 	if !allowed {
 		return nil, ErrRateLimitExceeded
 	}
-
-	// Update ExpiresIn based on remaining time
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	if remaining <= 0 {
-		return nil, ErrExpiredCode
-	}
-	code.ExpiresIn = int(remaining)
 
 	return code, nil
 }
@@ -236,9 +229,12 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 		return nil, ErrInvalidDeviceCode
 	}
 
-	if time.Now().After(code.ExpiresAt) {
+	// Update ExpiresIn based on remaining time
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	if remaining <= 0 {
 		return nil, ErrExpiredCode
 	}
+	code.ExpiresIn = int(remaining)
 
 	// Check poll rate limiting
 	if !f.canPoll(code.LastPoll) {
@@ -275,9 +271,12 @@ func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, tok
 		return ErrInvalidDeviceCode
 	}
 
-	if time.Now().After(code.ExpiresAt) {
+	// Update ExpiresIn based on remaining time
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	if remaining <= 0 {
 		return ErrExpiredCode
 	}
+	code.ExpiresIn = int(remaining)
 
 	if err := f.store.SaveToken(ctx, deviceCode, token); err != nil {
 		return fmt.Errorf("saving token: %w", err)
