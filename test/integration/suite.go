@@ -18,7 +18,7 @@ const (
 
 	// Timeouts and delays
 	ServiceTimeout = 60 * time.Second
-	RetryInterval = 5 * time.Second
+	RetryInterval  = 5 * time.Second
 )
 
 // TestSuite provides shared functionality for integration tests

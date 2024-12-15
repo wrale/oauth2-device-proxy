@@ -1,3 +1,4 @@
+// Package integration provides end-to-end testing for OAuth 2.0 Device Flow implementation
 package integration
 
 import (
@@ -17,8 +18,8 @@ type deviceAuthResponse struct {
 	UserCode                string `json:"user_code"`
 	VerificationURI         string `json:"verification_uri"`
 	VerificationURIComplete string `json:"verification_uri_complete"`
-	ExpiresIn              int    `json:"expires_in"`
-	Interval               int    `json:"interval"`
+	ExpiresIn               int    `json:"expires_in"`
+	Interval                int    `json:"interval"`
 }
 
 type tokenResponse struct {
@@ -208,9 +209,9 @@ func pollForToken(s *TestSuite, auth *deviceAuthResponse) (*tokenResponse, error
 
 func tryTokenRequest(s *TestSuite, deviceCode string) (*tokenResponse, error) {
 	data := url.Values{
-		"grant_type":   {"urn:ietf:params:oauth:grant-type:device_code"},
-		"device_code":  {deviceCode},
-		"client_id":    {"test-client"},
+		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		"device_code": {deviceCode},
+		"client_id":   {"test-client"},
 	}
 
 	resp, err := s.Client.Post(
@@ -229,7 +230,12 @@ func tryTokenRequest(s *TestSuite, deviceCode string) (*tokenResponse, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(string(body))
+		// Try to decode error response
+		var errResp errorResponse
+		if err := json.Unmarshal(body, &errResp); err != nil {
+			return nil, fmt.Errorf("unexpected response: %q", string(body))
+		}
+		return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.ErrorDescription)
 	}
 
 	var token tokenResponse
@@ -261,11 +267,11 @@ func testRateLimiting(t *testing.T, s *TestSuite, auth *deviceAuthResponse) {
 	sawSlowDown := false
 	for i := 0; i < 20 && !sawSlowDown; i++ {
 		time.Sleep(100 * time.Millisecond) // Small delay to not overwhelm
-		
+
 		data := url.Values{
-			"grant_type":   {"urn:ietf:params:oauth:grant-type:device_code"},
-			"device_code":  {auth.DeviceCode},
-			"client_id":    {"test-client"},
+			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+			"device_code": {auth.DeviceCode},
+			"client_id":   {"test-client"},
 		}
 
 		resp, err := s.Client.Post(
