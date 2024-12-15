@@ -253,8 +253,8 @@ func setJSONHeaders(w http.ResponseWriter) {
 
 // handleError sends a standardized error response per RFC 8628
 func handleError(w http.ResponseWriter, code string, description string) {
-	// Headers must be set before writing status or body
-	w.WriteHeader(http.StatusBadRequest)
+	// First set required headers per RFC 8628
+	setJSONHeaders(w)
 
 	response := struct {
 		Error            string `json:"error"`
@@ -264,6 +264,8 @@ func handleError(w http.ResponseWriter, code string, description string) {
 		ErrorDescription: strings.TrimSpace(description),
 	}
 
+	// Now set status code and write response
+	w.WriteHeader(http.StatusBadRequest)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		handleJSONError(w, err)
 	}
@@ -271,12 +273,14 @@ func handleError(w http.ResponseWriter, code string, description string) {
 
 // handleJSONError is called when JSON encoding itself fails
 func handleJSONError(w http.ResponseWriter, err error) {
+	// Headers must be set here since they weren't set by caller due to error
+	setJSONHeaders(w)
 	w.WriteHeader(http.StatusInternalServerError)
 
 	// Create error response manually since JSON encoding failed
 	errResponse := []byte(`{"error":"server_error","error_description":"Failed to encode response"}`)
 	if _, writeErr := w.Write(errResponse); writeErr != nil {
-		// Log the compound error when we have logging
+		// At this point all we can do is log the compound error when we have logging
 		return
 	}
 }
