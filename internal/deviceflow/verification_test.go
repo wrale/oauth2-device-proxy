@@ -16,7 +16,9 @@ func TestVerifyUserCode(t *testing.T) {
 		name     string
 		setup    func(*testing.T, *mockStore)
 		userCode string
-		wantErr  error
+		wantCode string // Expected RFC 8628 error code
+		wantMsg  string // Expected error description
+		wantErr  error  // For backwards compatibility
 	}{
 		{
 			name: "valid code",
@@ -37,6 +39,8 @@ func TestVerifyUserCode(t *testing.T) {
 			name:     "invalid code",
 			setup:    func(t *testing.T, s *mockStore) {},
 			userCode: "XXXX-YYYY",
+			wantCode: ErrorCodeInvalidRequest,
+			wantMsg:  "Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
 			wantErr:  ErrInvalidUserCode,
 		},
 		{
@@ -52,6 +56,8 @@ func TestVerifyUserCode(t *testing.T) {
 				}
 			},
 			userCode: "BDFG-HJKL",
+			wantCode: ErrorCodeExpiredToken,
+			wantMsg:  "Code has expired",
 			wantErr:  ErrExpiredCode,
 		},
 		{
@@ -71,6 +77,8 @@ func TestVerifyUserCode(t *testing.T) {
 				}
 			},
 			userCode: "BDFG-HJKL",
+			wantCode: ErrorCodeSlowDown,
+			wantMsg:  "Too many verification attempts, please wait",
 			wantErr:  ErrRateLimitExceeded,
 		},
 		{
@@ -79,6 +87,8 @@ func TestVerifyUserCode(t *testing.T) {
 				s.healthy = false
 			},
 			userCode: "BDFG-HJKL",
+			wantCode: ErrorCodeInvalidRequest,
+			wantMsg:  "Error validating code: internal error",
 			wantErr:  ErrStoreUnhealthy,
 		},
 		{
@@ -112,14 +122,20 @@ func TestVerifyUserCode(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
+
 				var dfe *DeviceFlowError
 				if errors.As(err, &dfe) {
-					// For DeviceFlowErrors, check if base error type matches
+					if tt.wantCode != "" && dfe.Code != tt.wantCode {
+						t.Errorf("expected error code %q, got %q", tt.wantCode, dfe.Code)
+					}
+					if tt.wantMsg != "" && dfe.Description != tt.wantMsg {
+						t.Errorf("expected error message %q, got %q", tt.wantMsg, dfe.Description)
+					}
+				} else {
+					// Fallback for non-DeviceFlowError
 					if !errors.Is(err, tt.wantErr) {
 						t.Errorf("expected error %v, got %v", tt.wantErr, err)
 					}
-				} else if !errors.Is(err, tt.wantErr) {
-					t.Errorf("expected error %v, got %v", tt.wantErr, err)
 				}
 			} else {
 				if err != nil {
