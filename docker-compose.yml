@@ -30,7 +30,6 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
 
-
   keycloak:
     image: quay.io/keycloak/keycloak:23.0
     command: 
@@ -55,7 +54,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: http://localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: http://localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
       start_period: 10s
       interval: 30s
       retries: 3
@@ -71,6 +70,12 @@ services:
       KEYCLOAK_REALM: device-flow-demo
       KEYCLOAK_CLIENT_ID: device-proxy
       KEYCLOAK_CLIENT_SECRET: your_client_secret_here
+      BASE_URL: http://localhost:8085
+      OAUTH_CLIENT_ID: device-proxy
+      OAUTH_CLIENT_SECRET: your_client_secret_here
+      OAUTH_AUTH_ENDPOINT: http://keycloak:8080/realms/device-flow-demo/protocol/openid-connect/auth
+      OAUTH_TOKEN_ENDPOINT: http://keycloak:8080/realms/device-flow-demo/protocol/openid-connect/token
+      CSRF_SECRET: your_csrf_secret_here_make_this_random_and_secure
       PORT: 8085
     depends_on:
       redis:
@@ -79,6 +84,11 @@ services:
         condition: service_healthy
     ports:
       - "8085:8085"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
 
   device-simulator:
     image: curlimages/curl:8.5.0
@@ -87,7 +97,7 @@ services:
       echo "Device Simulator Starting..." &&
       while true; do
         echo "Requesting device code..." &&
-        RESP=$$(curl -s -X POST http://oauth2-device-proxy:8080/device/code \
+        RESP=$$(curl -s -X POST http://oauth2-device-proxy:8085/device/code \
           -d "client_id=device-simulator") &&
         echo "Response: $$RESP" &&
         CODE=$$(echo $$RESP | jq -r .device_code) &&
@@ -97,7 +107,7 @@ services:
           echo "And enter code: $$(echo $$RESP | jq -r .user_code)" &&
           while true; do
             sleep $$(echo $$RESP | jq -r .interval) &&
-            TOKEN_RESP=$$(curl -s -X POST http://oauth2-device-proxy:8080/device/token \
+            TOKEN_RESP=$$(curl -s -X POST http://oauth2-device-proxy:8085/device/token \
               -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
               -d "client_id=device-simulator" \
               -d "device_code=$$CODE") &&
