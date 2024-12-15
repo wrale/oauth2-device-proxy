@@ -23,20 +23,10 @@ type Flow struct {
 
 // NewFlow creates a new device flow manager
 func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
-	f := &Flow{
-		store:           store,
-		baseURL:         baseURL,
-		expiryDuration:  15 * time.Minute,
-		pollInterval:    5 * time.Second,
-		userCodeLength:  validation.MinLength, // Use validation package constants
-		rateLimitWindow: time.Minute,
-		maxPollsPerMin:  12,
-	}
-
+	f := newDefaultFlow(store, baseURL)
 	for _, opt := range opts {
 		opt(f)
 	}
-
 	return f
 }
 
