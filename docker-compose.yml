@@ -57,7 +57,7 @@ services:
   oauth2-device-proxy:
     build:
       context: .
-      dockerfile: build/Dockerfile
+      dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379
       KEYCLOAK_URL: http://keycloak:8080

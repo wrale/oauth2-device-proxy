@@ -192,7 +192,7 @@ dev: redis-start ## Run with hot reload
 
 build-image: ## Build container image
 	@echo "==> Building container image with $(CONTAINER_ENGINE)"
-	$(CONTAINER_ENGINE) build -t $(IMAGE_NAME) -t $(IMAGE_LATEST) -f build/Dockerfile $(BUILD_CONTEXT)
+	$(CONTAINER_ENGINE) build -t $(IMAGE_NAME) -t $(IMAGE_LATEST) -f Dockerfile $(BUILD_CONTEXT)
 
 push-image: ## Push container image to registry
 	@echo "==> Pushing image to registry"
