@@ -20,8 +20,7 @@ func (s *server) handleHealth() http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Always set required headers per RFC 8628
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "application/json")
+		setJSONHeaders(w)
 
 		resp := healthResponse{
 			Status:  "ok",
@@ -34,7 +33,9 @@ func (s *server) handleHealth() http.HandlerFunc {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
-		writeJSON(w, resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			handleJSONError(w, err)
+		}
 	}
 }
 
@@ -42,8 +43,7 @@ func (s *server) handleHealth() http.HandlerFunc {
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set required headers per RFC 8628 section 3.2 before any returns
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "application/json")
+		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
 			writeError(w, "invalid_request", "POST method required (Section 3.1)")
@@ -56,9 +56,9 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.1
-		for _, values := range r.Form {
+		for key, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.1)")
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.1): "+key)
 				return
 			}
 		}
@@ -72,11 +72,36 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 		scope := r.Form.Get("scope")
 		code, err := s.flow.RequestDeviceCode(r.Context(), clientID, scope)
 		if err != nil {
-			writeError(w, "server_error", "Error generating device code (Section 3.2)")
+			if errors.Is(err, deviceflow.ErrInvalidDeviceCode) {
+				writeError(w, "invalid_request", "Invalid device code format (Section 3.2)")
+			} else if errors.Is(err, deviceflow.ErrInvalidUserCode) {
+				writeError(w, "invalid_request", "Invalid user code format (Section 6.1)")
+			} else {
+				writeError(w, "server_error", "Failed to generate device code (Section 3.2)")
+			}
 			return
 		}
 
-		writeJSON(w, code)
+		// Ensure compliant response format per RFC 8628 section 3.2
+		response := struct {
+			DeviceCode              string `json:"device_code"`
+			UserCode                string `json:"user_code"`
+			VerificationURI         string `json:"verification_uri"`
+			VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
+			ExpiresIn               int    `json:"expires_in"`
+			Interval                int    `json:"interval"`
+		}{
+			DeviceCode:              code.DeviceCode,
+			UserCode:                code.UserCode,
+			VerificationURI:         code.VerificationURI,
+			VerificationURIComplete: code.VerificationURIComplete,
+			ExpiresIn:               code.ExpiresIn,
+			Interval:                code.Interval,
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			handleJSONError(w, err)
+		}
 	}
 }
 
@@ -84,8 +109,7 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set required headers per RFC 8628 before any returns
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "application/json")
+		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
 			writeError(w, "invalid_request", "POST method required (Section 3.4)")
@@ -98,9 +122,9 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		}
 
 		// Check for duplicate parameters per RFC 8628
-		for _, values := range r.Form {
+		for key, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4)")
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4): "+key)
 				return
 			}
 		}
@@ -139,7 +163,9 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, token)
+		if err := json.NewEncoder(w).Encode(token); err != nil {
+			handleJSONError(w, err)
+		}
 	}
 }
 
@@ -212,42 +238,44 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 	}
 }
 
-// writeJSON writes a JSON response with appropriate headers per RFC 8628
-func writeJSON(w http.ResponseWriter, v interface{}) {
+// setJSONHeaders sets required headers for JSON responses per RFC 8628
+func setJSONHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+}
 
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		// If encoding fails, send error response per RFC 8628
-		w.WriteHeader(http.StatusInternalServerError)
-		// Create error response manually
-		errData := map[string]string{
-			"error":             "server_error",
-			"error_description": "Failed to encode response",
-		}
-		errorBytes, _ := json.Marshal(errData)
-		_, _ = w.Write(errorBytes)
+// handleJSONError handles JSON encoding errors with a proper error response
+func handleJSONError(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusInternalServerError)
+	errResponse := struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}{
+		Error:            "server_error",
+		ErrorDescription: "Failed to encode response",
+	}
+	// Create error response manually as fallback
+	errorBytes, _ := json.Marshal(errResponse)
+	if _, err := w.Write(errorBytes); err != nil {
+		// At this point, we've exhausted our options for sending an error response
+		// Log the error if we have a logger, but continue since we can't recover
+		// TODO: Add logging once we have a logger configured
 	}
 }
 
 // writeError sends an RFC 8628 compliant error response
 func writeError(w http.ResponseWriter, code string, description string) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 
-	data := map[string]string{
-		"error":             code,
-		"error_description": strings.TrimSpace(description),
+	response := struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}{
+		Error:            code,
+		ErrorDescription: strings.TrimSpace(description),
 	}
 
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Create error response manually as fallback
-		errData := map[string]string{
-			"error":             "server_error",
-			"error_description": "Failed to encode error response",
-		}
-		errorBytes, _ := json.Marshal(errData)
-		_, _ = w.Write(errorBytes)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		handleJSONError(w, err)
 	}
 }
