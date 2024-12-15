@@ -19,6 +19,29 @@ func generateSecureCode(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// selectRandomChar selects a random character from available set without modulo bias
+func selectRandomChar(available []rune) (rune, error) {
+	availLen := len(available)
+	// Calculate required bytes for random selection
+	maxNeeded := 256 - (256 % availLen)
+
+	for {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err != nil {
+			return 0, fmt.Errorf("generating random byte: %w", err)
+		}
+
+		// Reject values that would cause modulo bias
+		if int(b[0]) >= maxNeeded {
+			continue
+		}
+
+		// Safe to use modulo here - no bias
+		idx := int(b[0]) % availLen
+		return available[idx], nil
+	}
+}
+
 // generateUserCode generates a user-friendly code per RFC 8628 section 6.1
 func generateUserCode() (string, error) {
 	maxAttempts := 100 // Prevent infinite loops
@@ -29,68 +52,40 @@ func generateUserCode() (string, error) {
 		freqs := make(map[rune]int)
 		success := true
 
-		// Generate first group
-		for i := 0; i < validation.MinGroupSize; i++ {
-			// Find available characters
-			var available []rune
-			for _, c := range charset {
-				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
-					available = append(available, c)
-				}
+		// Generate both groups with the same logic
+		for group := 0; group < 2; group++ {
+			if group > 0 {
+				builder.WriteRune('-')
 			}
 
-			if len(available) == 0 {
-				success = false
+			// Generate characters for this group
+			for i := 0; i < validation.MinGroupSize; i++ {
+				// Find available characters
+				var available []rune
+				for _, c := range charset {
+					if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+						available = append(available, c)
+					}
+				}
+
+				if len(available) == 0 {
+					success = false
+					break
+				}
+
+				// Select random character with no modulo bias
+				char, err := selectRandomChar(available)
+				if err != nil {
+					return "", err
+				}
+
+				builder.WriteRune(char)
+				freqs[char]++
+			}
+
+			if !success {
 				break
 			}
-
-			// Generate random index
-			b := make([]byte, 1)
-			if _, err := rand.Read(b); err != nil {
-				return "", fmt.Errorf("generating random byte: %w", err)
-			}
-			// Map random byte to available index
-			idx := int(b[0]) % len(available)
-
-			// Add selected character
-			char := available[idx]
-			builder.WriteRune(char)
-			freqs[char]++
-		}
-
-		if !success {
-			continue
-		}
-
-		// Add separator
-		builder.WriteRune('-')
-
-		// Generate second group
-		for i := 0; i < validation.MinGroupSize; i++ {
-			// Find available characters
-			var available []rune
-			for _, c := range charset {
-				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
-					available = append(available, c)
-				}
-			}
-
-			if len(available) == 0 {
-				success = false
-				break
-			}
-
-			// Generate random index
-			b := make([]byte, 1)
-			if _, err := rand.Read(b); err != nil {
-				return "", fmt.Errorf("generating random byte: %w", err)
-			}
-			idx := int(b[0]) % len(available)
-
-			// Add selected character
-			char := available[idx]
-			builder.WriteRune(char)
-			freqs[char]++
 		}
 
 		if !success {
