@@ -68,14 +68,17 @@ func (s *server) routes() {
 	// Health check endpoint
 	s.router.Get("/health", s.handleHealth())
 
-	// Device flow endpoints per RFC 8628 section 3.3-3.4
-	s.router.Post("/device/code", s.handleDeviceCode())
-	s.router.Post("/device/token", s.handleDeviceToken())
-
-	// Handle both GET (form display) and POST (form submission) on /device
+	// Group all device flow endpoints under /device per RFC 8628 section 3.3-3.4
 	s.router.Route("/device", func(r chi.Router) {
-		r.Get("/", s.handleDeviceVerification())
-		r.Post("/", s.handleDeviceVerification())
+		// Device authorization endpoints
+		r.Post("/code", s.handleDeviceCode())   // Device code request
+		r.Post("/token", s.handleDeviceToken()) // Token polling
+
+		// User verification endpoints
+		r.Get("/", s.handleDeviceVerification())  // Display verification form
+		r.Post("/", s.handleDeviceVerification()) // Process verification
+
+		// Completion handling
 		r.Get("/complete", s.handleDeviceComplete())
 	})
 }
@@ -115,8 +118,8 @@ func (s *server) exchangeCode(ctx context.Context, code string, deviceCode *devi
 	return &deviceflow.TokenResponse{
 		AccessToken:  token.AccessToken,
 		TokenType:    token.TokenType,
-		ExpiresIn:    int(time.Until(token.Expiry).Seconds()), // Updated to use time.Until
+		ExpiresIn:    int(time.Until(token.Expiry).Seconds()), // Using time.Until for accuracy
 		RefreshToken: token.RefreshToken,
-		Scope:        deviceCode.Scope, // Use the scope from the original device code request
+		Scope:        deviceCode.Scope, // Preserve original scope
 	}, nil
 }
