@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 	"github.com/wrale/oauth2-device-proxy/internal/templates"
@@ -19,7 +20,6 @@ func (s *server) handleHealth() http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Always set required headers per RFC 8628
 		setJSONHeaders(w)
 
 		resp := healthResponse{
@@ -27,7 +27,6 @@ func (s *server) handleHealth() http.HandlerFunc {
 			Version: Version,
 		}
 
-		// Check component health
 		if err := s.checkHealth(r.Context()); err != nil {
 			resp.Status = "degraded"
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -42,45 +41,52 @@ func (s *server) handleHealth() http.HandlerFunc {
 // Device code request handler implements RFC 8628 section 3.2
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628 section 3.2
 		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - POST method required")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "POST method required")
 			return
 		}
 
 		if err := r.ParseForm(); err != nil {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - Invalid request format")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "Invalid request format")
 			return
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.1
 		for key, values := range r.Form {
 			if len(values) > 1 {
-				handleError(w, "invalid_request", "RFC 8628 Section 3.1 - Parameters MUST NOT be included more than once: "+key)
+				handleError(w, deviceflow.ErrorCodeInvalidRequest, "Parameters MUST NOT be included more than once: "+key)
 				return
 			}
 		}
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - The client_id parameter is REQUIRED")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "The client_id parameter is REQUIRED")
 			return
 		}
 
 		scope := r.Form.Get("scope")
 		code, err := s.flow.RequestDeviceCode(r.Context(), clientID, scope)
 		if err != nil {
-			var errMessage string
-			if errors.Is(err, deviceflow.ErrInvalidDeviceCode) {
-				errMessage = "RFC 8628 Section 3.2 - Invalid device code format"
-			} else if errors.Is(err, deviceflow.ErrInvalidUserCode) {
-				errMessage = "RFC 8628 Section 6.1 - Invalid user code format"
-			} else {
-				errMessage = "RFC 8628 Section 3.2 - Failed to generate device code"
+			var (
+				dferr      *deviceflow.DeviceFlowError
+				errMessage string
+			)
+			if errors.As(err, &dferr) {
+				handleError(w, dferr.Code, dferr.Description)
+				return
 			}
-			handleError(w, "invalid_request", errMessage)
+			// Handle non-DeviceFlowErrors with a default error
+			handleError(w, deviceflow.ErrorCodeServerError, "Failed to generate device code")
+			return
+		}
+
+		// Ensure expires_in is positive and calculated from response time
+		expiresIn := int(time.Until(code.ExpiresAt).Seconds())
+		if expiresIn <= 0 {
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "Invalid expiration time")
 			return
 		}
 
@@ -96,12 +102,13 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			UserCode:                code.UserCode,
 			VerificationURI:         code.VerificationURI,
 			VerificationURIComplete: code.VerificationURIComplete,
-			ExpiresIn:               code.ExpiresIn,
+			ExpiresIn:               expiresIn,
 			Interval:                code.Interval,
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			handleJSONError(w, err)
+			return
 		}
 	}
 }
@@ -109,69 +116,76 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 // Device token polling handler implements RFC 8628 section 3.4
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628 section 3.4
 		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - POST method required")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "POST method required")
 			return
 		}
 
 		if err := r.ParseForm(); err != nil {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - Invalid request format")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "Invalid request format")
 			return
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.4
 		for key, values := range r.Form {
 			if len(values) > 1 {
-				handleError(w, "invalid_request", "RFC 8628 Section 3.4 - Parameters MUST NOT be included more than once: "+key)
+				handleError(w, deviceflow.ErrorCodeInvalidRequest, "Parameters MUST NOT be included more than once: "+key)
 				return
 			}
 		}
 
 		grantType := r.Form.Get("grant_type")
 		if grantType == "" {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The grant_type parameter is REQUIRED")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "The grant_type parameter is REQUIRED")
 			return
 		}
 
 		if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
-			handleError(w, "unsupported_grant_type", "RFC 8628 Section 3.4 - Only urn:ietf:params:oauth:grant-type:device_code is supported")
+			handleError(w, deviceflow.ErrorCodeUnsupportedGrant, "Only urn:ietf:params:oauth:grant-type:device_code is supported")
 			return
 		}
 
 		deviceCode := r.Form.Get("device_code")
 		if deviceCode == "" {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The device_code parameter is REQUIRED")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "The device_code parameter is REQUIRED")
 			return
 		}
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The client_id parameter is REQUIRED for public clients")
+			handleError(w, deviceflow.ErrorCodeInvalidRequest, "The client_id parameter is REQUIRED for public clients")
 			return
 		}
 
 		token, err := s.flow.CheckDeviceCode(r.Context(), deviceCode)
 		if err != nil {
+			var dferr *deviceflow.DeviceFlowError
+			if errors.As(err, &dferr) {
+				handleError(w, dferr.Code, dferr.Description)
+				return
+			}
+
+			// If not a known error type, convert it based on the error value
 			switch {
 			case errors.Is(err, deviceflow.ErrInvalidDeviceCode):
-				handleError(w, "invalid_grant", "RFC 8628 Section 3.5 - The device_code is invalid or expired")
+				handleError(w, deviceflow.ErrorCodeInvalidGrant, "The device_code is invalid or expired")
 			case errors.Is(err, deviceflow.ErrExpiredCode):
-				handleError(w, "expired_token", "RFC 8628 Section 3.5 - The device_code has expired")
+				handleError(w, deviceflow.ErrorCodeExpiredToken, "The device_code has expired")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
-				handleError(w, "authorization_pending", "RFC 8628 Section 3.5 - The authorization request is still pending")
+				handleError(w, deviceflow.ErrorCodeAuthorizationPending, "The authorization request is still pending")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				handleError(w, "slow_down", "RFC 8628 Section 3.5 - Polling interval must be increased by 5 seconds")
+				handleError(w, deviceflow.ErrorCodeSlowDown, "Polling interval must be increased by 5 seconds")
 			default:
-				handleError(w, "server_error", "RFC 8628 Section 3.5 - An unexpected error occurred processing the request")
+				handleError(w, deviceflow.ErrorCodeServerError, "An unexpected error occurred processing the request")
 			}
 			return
 		}
 
 		if err := json.NewEncoder(w).Encode(token); err != nil {
 			handleJSONError(w, err)
+			return
 		}
 	}
 }
@@ -268,6 +282,7 @@ func handleError(w http.ResponseWriter, code string, description string) {
 	w.WriteHeader(http.StatusBadRequest)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		handleJSONError(w, err)
+		return
 	}
 }
 
