@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
 
 // ErrStoreUnhealthy indicates the store is not available
@@ -35,7 +37,7 @@ func (m *mockStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error 
 		return ErrStoreUnhealthy
 	}
 	m.deviceCodes[code.DeviceCode] = code
-	m.userCodes[normalizeCode(code.UserCode)] = code.DeviceCode
+	m.userCodes[validation.NormalizeCode(code.UserCode)] = code.DeviceCode
 	return nil
 }
 
@@ -54,7 +56,7 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 	if !m.healthy {
 		return nil, ErrStoreUnhealthy
 	}
-	deviceCode, exists := m.userCodes[normalizeCode(userCode)]
+	deviceCode, exists := m.userCodes[validation.NormalizeCode(userCode)]
 	if !exists {
 		return nil, nil
 	}
@@ -89,7 +91,7 @@ func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) err
 		return nil
 	}
 	delete(m.deviceCodes, deviceCode)
-	delete(m.userCodes, normalizeCode(code.UserCode))
+	delete(m.userCodes, validation.NormalizeCode(code.UserCode))
 	delete(m.tokens, deviceCode)
 	delete(m.attempts, deviceCode)
 	return nil
