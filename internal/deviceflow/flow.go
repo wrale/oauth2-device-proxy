@@ -4,11 +4,7 @@ package deviceflow
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"strings"
 	"time"
-
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
 
 const (
@@ -49,25 +45,6 @@ func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 	}
 
 	return f
-}
-
-// buildVerificationURIs creates the verification URIs per RFC 8628 sections 3.2 and 3.3.1
-func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
-	// Ensure base URL ends with no trailing slash
-	baseURL := strings.TrimSuffix(f.baseURL, "/")
-	verificationURI := baseURL + "/device"
-
-	// Only include code in complete URI if it's valid
-	if err := validation.ValidateUserCode(userCode); err != nil {
-		return verificationURI, "" // Return base URI only if code invalid
-	}
-
-	// Create verification URI with code per RFC section 3.3.1
-	query := url.Values{}
-	query.Set("code", userCode) // Use display format
-	completePath := verificationURI + "?" + query.Encode()
-
-	return verificationURI, completePath
 }
 
 // RequestDeviceCode initiates a new device authorization flow
@@ -135,106 +112,7 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 	return code, nil
 }
 
-// VerifyUserCode verifies a user code and checks rate limiting.
-// Error checking order per RFC 8628:
-// 1. Store errors take precedence
-// 2. Check if code exists
-// 3. Check expiration
-// 4. Check rate limiting
-// 5. Validate code format
-func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	normalized := validation.NormalizeCode(userCode)
-
-	// First check store errors - these take precedence
-	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
-	if err != nil {
-		return nil, err // Storage errors pass through unchanged
-	}
-
-	// Code not found - validate format for helpful error
-	if code == nil {
-		if err := validation.ValidateUserCode(userCode); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidUserCode, err)
-		}
-		return nil, ErrInvalidUserCode
-	}
-
-	// Code exists - check expiration first
-	if time.Now().After(code.ExpiresAt) {
-		return nil, ErrExpiredCode
-	}
-
-	// Check rate limiting per RFC 8628 section 5.2
-	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
-	if err != nil {
-		return nil, err
-	}
-	if !allowed {
-		return nil, ErrRateLimitExceeded
-	}
-
-	// Update ExpiresIn based on remaining time
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	code.ExpiresIn = int(remaining)
-
-	return code, nil
-}
-
-// CheckDeviceCode checks device code status per RFC 8628 section 3.4
-func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenResponse, error) {
-	// Use GetDeviceCode for consistent validation
-	code, err := f.GetDeviceCode(ctx, deviceCode)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check rate limiting per RFC 8628 section 3.5
-	if !f.canPoll(code.LastPoll) {
-		return nil, ErrSlowDown
-	}
-
-	// Update last poll time
-	code.LastPoll = time.Now()
-	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
-	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
-		return nil, fmt.Errorf("updating last poll time: %w", err)
-	}
-
-	// Check if token exists
-	token, err := f.store.GetToken(ctx, deviceCode)
-	if err != nil {
-		return nil, fmt.Errorf("getting token: %w", err)
-	}
-
-	if token == nil {
-		return nil, ErrPendingAuthorization
-	}
-
-	return token, nil
-}
-
-// CompleteAuthorization completes device authorization by saving the token
-func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
-	// Use GetDeviceCode for consistent validation
-	code, err := f.GetDeviceCode(ctx, deviceCode)
-	if err != nil {
-		return err
-	}
-
-	// Save the token
-	if err := f.store.SaveToken(ctx, deviceCode, token); err != nil {
-		return fmt.Errorf("saving token: %w", err)
-	}
-
-	return nil
-}
-
 // CheckHealth verifies the flow manager's storage backend is healthy
 func (f *Flow) CheckHealth(ctx context.Context) error {
 	return f.store.CheckHealth(ctx)
-}
-
-// canPoll determines if polling is allowed based on the interval
-func (f *Flow) canPoll(lastPoll time.Time) bool {
-	return time.Since(lastPoll) >= f.pollInterval
 }

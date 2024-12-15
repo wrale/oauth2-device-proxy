@@ -9,11 +9,11 @@ import (
 // Error codes defined by RFC 8628 section 3.5
 const (
 	ErrorCodeAuthorizationPending = "authorization_pending"
-	ErrorCodeSlowDown            = "slow_down"
-	ErrorCodeAccessDenied        = "access_denied"
-	ErrorCodeExpiredToken        = "expired_token"
-	ErrorCodeInvalidGrant        = "invalid_grant"
-	ErrorCodeInvalidRequest      = "invalid_request"
+	ErrorCodeSlowDown             = "slow_down"
+	ErrorCodeAccessDenied         = "access_denied"
+	ErrorCodeExpiredToken         = "expired_token"
+	ErrorCodeInvalidGrant         = "invalid_grant"
+	ErrorCodeInvalidRequest       = "invalid_request"
 )
 
 // Common errors that may occur during the device authorization flow
