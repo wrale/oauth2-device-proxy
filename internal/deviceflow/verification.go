@@ -9,43 +9,40 @@ import (
 )
 
 // VerifyUserCode verifies a user code and checks rate limiting.
-// Error checking follows exact order specified in RFC 8628 section 3.5:
-// 1. Input validation (format, charset, entropy)
-// 2. Store error checking
-// 3. Code existence
-// 4. Code expiration
-// 5. Rate limiting
+// Error checking follows exact RFC 8628 section 3.5 order:
+// 1. Store errors take precedence (authorization server errors)
+// 2. Code existence and state (authorization pending, expired)
+// 3. Rate limiting (slow_down)
+// 4. Code format validation
 func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// First validate format per RFC 8628 section 6.1
-	if err := validation.ValidateUserCode(userCode); err != nil {
-		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
-			"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
-		)
-	}
-
-	// Normalize code for consistent handling
+	// Normalize for lookup - validation comes later
 	normalized := validation.NormalizeCode(userCode)
 
-	// Check store errors first per RFC 8628
+	// First check store errors - these take precedence per RFC 8628
 	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
 	if err != nil {
-		// Wrap store errors for proper error response format
 		return nil, NewDeviceFlowError(
 			ErrorCodeInvalidRequest,
 			"Error validating code: internal error",
 		)
 	}
 
-	// Code not found after validation
+	// Code existence check next
 	if code == nil {
+		// For non-existent codes, provide validation feedback
+		if err := validation.ValidateUserCode(userCode); err != nil {
+			return nil, NewDeviceFlowError(
+				ErrorCodeInvalidRequest,
+				"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
+			)
+		}
 		return nil, NewDeviceFlowError(
 			ErrorCodeInvalidRequest,
 			"Invalid user code: code not found",
 		)
 	}
 
-	// Check expiration before rate limiting
+	// Next check expiration
 	if time.Now().After(code.ExpiresAt) {
 		return nil, NewDeviceFlowError(
 			ErrorCodeExpiredToken,
@@ -53,7 +50,7 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 		)
 	}
 
-	// Check rate limiting per RFC 8628 section 5.2
+	// Rate limiting check per RFC 8628 section 5.2
 	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
 	if err != nil {
 		return nil, NewDeviceFlowError(
@@ -65,6 +62,14 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 		return nil, NewDeviceFlowError(
 			ErrorCodeSlowDown,
 			"Too many verification attempts, please wait",
+		)
+	}
+
+	// For valid codes, run format validation last to catch any issues
+	if err := validation.ValidateUserCode(userCode); err != nil {
+		return nil, NewDeviceFlowError(
+			ErrorCodeInvalidRequest,
+			"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
 		)
 	}
 

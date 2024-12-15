@@ -10,7 +10,7 @@ import (
 	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
-// TestVerifyUserCode tests the user code verification per RFC 8628 sections 3.3 and 5.2
+// TestVerifyUserCode tests user code verification per RFC 8628 sections 3.3 and 5.2
 func TestVerifyUserCode(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -23,14 +23,14 @@ func TestVerifyUserCode(t *testing.T) {
 			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
-					UserCode:   "ABCD-EFGH",
+					UserCode:   "BDFG-HJKL", // Valid RFC 8628 charset
 					ExpiresAt:  time.Now().Add(10 * time.Minute),
 				}
 				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
 					t.Fatalf("failed to setup test: %v", err)
 				}
 			},
-			userCode: "ABCD-EFGH",
+			userCode: "BDFG-HJKL",
 			wantErr:  nil,
 		},
 		{
@@ -44,14 +44,14 @@ func TestVerifyUserCode(t *testing.T) {
 			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
-					UserCode:   "ABCD-EFGH",
+					UserCode:   "BDFG-HJKL",
 					ExpiresAt:  time.Now().Add(-1 * time.Minute),
 				}
 				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
 					t.Fatalf("failed to setup test: %v", err)
 				}
 			},
-			userCode: "ABCD-EFGH",
+			userCode: "BDFG-HJKL",
 			wantErr:  ErrExpiredCode,
 		},
 		{
@@ -59,7 +59,7 @@ func TestVerifyUserCode(t *testing.T) {
 			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
-					UserCode:   "ABCD-EFGH",
+					UserCode:   "BDFG-HJKL",
 					ExpiresAt:  time.Now().Add(10 * time.Minute),
 				}
 				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
@@ -70,7 +70,7 @@ func TestVerifyUserCode(t *testing.T) {
 					s.attempts[code.DeviceCode]++
 				}
 			},
-			userCode: "ABCD-EFGH",
+			userCode: "BDFG-HJKL",
 			wantErr:  ErrRateLimitExceeded,
 		},
 		{
@@ -78,7 +78,7 @@ func TestVerifyUserCode(t *testing.T) {
 			setup: func(t *testing.T, s *mockStore) {
 				s.healthy = false
 			},
-			userCode: "ABCD-EFGH",
+			userCode: "BDFG-HJKL",
 			wantErr:  ErrStoreUnhealthy,
 		},
 		{
@@ -86,14 +86,14 @@ func TestVerifyUserCode(t *testing.T) {
 			setup: func(t *testing.T, s *mockStore) {
 				code := &DeviceCode{
 					DeviceCode: "test-device",
-					UserCode:   "ABCD-EFGH",
+					UserCode:   "BDFG-HJKL",
 					ExpiresAt:  time.Now().Add(10 * time.Minute),
 				}
 				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
 					t.Fatalf("failed to setup test: %v", err)
 				}
 			},
-			userCode: " abcd-efgh ", // Should be normalized
+			userCode: " bdfg-hjkl ", // Should be normalized
 			wantErr:  nil,
 		},
 	}
@@ -112,7 +112,13 @@ func TestVerifyUserCode(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if !errors.Is(err, tt.wantErr) {
+				var dfe *DeviceFlowError
+				if errors.As(err, &dfe) {
+					// For DeviceFlowErrors, check if base error type matches
+					if !errors.Is(err, tt.wantErr) {
+						t.Errorf("expected error %v, got %v", tt.wantErr, err)
+					}
+				} else if !errors.Is(err, tt.wantErr) {
 					t.Errorf("expected error %v, got %v", tt.wantErr, err)
 				}
 			} else {
@@ -124,13 +130,11 @@ func TestVerifyUserCode(t *testing.T) {
 				}
 
 				// Additional checks for valid codes per RFC 8628
-				if tt.userCode != code.UserCode {
-					normalized := validation.NormalizeCode(tt.userCode)
-					storedNormalized := validation.NormalizeCode(code.UserCode)
-					if normalized != storedNormalized {
-						t.Errorf("codes don't match after normalization: %q != %q",
-							normalized, storedNormalized)
-					}
+				normalized := validation.NormalizeCode(tt.userCode)
+				storedNormalized := validation.NormalizeCode(code.UserCode)
+				if normalized != storedNormalized {
+					t.Errorf("codes don't match after normalization: %q != %q",
+						normalized, storedNormalized)
 				}
 			}
 		})
