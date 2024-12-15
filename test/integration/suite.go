@@ -11,9 +11,9 @@ import (
 
 // Configuration for integration tests
 const (
-	// Service endpoints
-	ProxyEndpoint    = "http://localhost:8080"
-	KeycloakEndpoint = "http://localhost:8081"
+	// Service endpoints - using docker-compose exposed ports
+	ProxyEndpoint    = "http://localhost:8085" // Updated to match docker-compose config
+	KeycloakEndpoint = "http://localhost:8080"
 	RedisEndpoint    = "localhost:6379"
 
 	// Timeouts and delays
