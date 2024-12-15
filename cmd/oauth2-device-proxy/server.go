@@ -68,12 +68,16 @@ func (s *server) routes() {
 	// Health check endpoint
 	s.router.Get("/health", s.handleHealth())
 
-	// Device flow endpoints
+	// Device flow endpoints per RFC 8628 section 3.3-3.4
 	s.router.Post("/device/code", s.handleDeviceCode())
 	s.router.Post("/device/token", s.handleDeviceToken())
-	s.router.Get("/device", s.handleDeviceVerification())
-	s.router.Post("/device/verify", s.handleDeviceVerification())
-	s.router.Get("/device/complete", s.handleDeviceComplete())
+
+	// Handle both GET (form display) and POST (form submission) on /device
+	s.router.Route("/device", func(r chi.Router) {
+		r.Get("/", s.handleDeviceVerification())
+		r.Post("/", s.handleDeviceVerification())
+		r.Get("/complete", s.handleDeviceComplete())
+	})
 }
 
 // ServeHTTP implements http.Handler
