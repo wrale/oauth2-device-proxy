@@ -14,7 +14,7 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 	// Use GetDeviceCode for consistent validation
 	code, err := f.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return nil, fmt.Errorf("validating device code: %w", err)
+		return nil, err // GetDeviceCode already provides proper error context
 	}
 
 	// Check rate limiting per RFC 8628 section 3.5
@@ -47,9 +47,8 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 // and a token has been obtained from the authorization server.
 func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	// Use GetDeviceCode for consistent validation
-	code, err := f.GetDeviceCode(ctx, deviceCode)
-	if err != nil {
-		return err
+	if _, err := f.GetDeviceCode(ctx, deviceCode); err != nil {
+		return err // GetDeviceCode already provides proper error context
 	}
 
 	// Save the token
