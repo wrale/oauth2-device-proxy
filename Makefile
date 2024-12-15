@@ -56,7 +56,7 @@ COMPOSE_DEV_FILE=docker-compose.dev.yml
 
 .PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build docker-build docker-push docker-run docker-stop compose-up compose-down
-.PHONY: build-image push-image x y z verify-deps test-deps test-clean redis-start redis-stop
+.PHONY: build-image push-image x y z r verify-deps test-deps test-clean redis-start redis-stop
 .PHONY: integration-test integration-deps integration-clean
 
 help: ## Display available commands
@@ -230,3 +230,16 @@ y: ## Run all checks and copy output to clipboard while displaying
 z: ## Copy recent git log messages to clipboard while displaying
 	@echo "==> Copying 8 most recent git log messages and copying output..."
 	@{ git log -n8 2>&1; } | $(COPY_TO_CLIPBOARD)
+
+r: ## Combine tree, make all, git log, and codestate outputs with separators
+	@echo "==> Running combined commands and copying output..."
+	@{ \
+		echo "=== Tree Structure ==="; \
+		tree --gitignore; \
+		echo -e "\n=== Make All Output ==="; \
+		make all; \
+		echo -e "\n=== Git Log ==="; \
+		git log -n8; \
+		echo -e "\n=== CodeState Output ==="; \
+		codestate.py; \
+	} 2>&1 | $(COPY_TO_CLIPBOARD)
