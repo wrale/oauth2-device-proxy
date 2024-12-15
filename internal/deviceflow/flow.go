@@ -4,7 +4,7 @@ package deviceflow
 import (
 	"context"
 	"fmt"
-	"net/url"
+	"path"
 	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
@@ -32,15 +32,16 @@ func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
-	// Calculate expiry duration per RFC 8628 section 3.2
-	// Ensure duration is at least 10x the length of the user code
+	// Calculate expiry time per RFC 8628 section 3.2
+	// Duration must provide sufficient time for user interaction
+	// Minimum duration is 10 minutes per section 6.1
 	expiresIn := int(f.expiryDuration.Seconds())
-	minDuration := f.userCodeLength * 10 // RFC 8628 recommends at least 10 minutes
+	minDuration := 600 // 10 minutes in seconds
 	if expiresIn < minDuration {
 		expiresIn = minDuration
 	}
 
-	// Set ExpiresAt based on expiresIn value
+	// Set absolute expiry time based on calculated duration
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
@@ -58,9 +59,12 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 
 	verificationURI := f.baseURL + "/device"
 
-	// Construct verification_uri_complete per RFC 8628 section 3.3.1
-	values := url.Values{"code": {userCode}}
-	verificationURIComplete := verificationURI + "?" + values.Encode()
+	// Build verification_uri_complete without URL encoding to avoid null bytes
+	// Format per RFC 8628 section 3.3.1, using simple path joining
+	verificationURIComplete := verificationURI
+	if err := validation.ValidateUserCode(userCode); err == nil {
+		verificationURIComplete = verificationURI + "?code=" + userCode
+	}
 
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,

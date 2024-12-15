@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
 	"github.com/jmdots/oauth2-device-proxy/internal/templates"
@@ -41,9 +42,17 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			return
 		}
 
+		// Check for duplicate parameters per RFC 8628 section 3.1
+		for key, values := range r.Form {
+			if len(values) > 1 {
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
+				return
+			}
+		}
+
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			writeError(w, "invalid_request", "Missing client_id parameter")
+			writeError(w, "invalid_request", "client_id is REQUIRED for public clients (Section 3.1)")
 			return
 		}
 
@@ -55,8 +64,8 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			return
 		}
 
-		// The ExpiresIn field is now directly included in the DeviceCode struct
-		// per RFC 8628 section 3.2, so we can write it directly
+		// Set required headers per RFC 8628 section 3.2
+		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, code)
 	}
 }
@@ -69,14 +78,28 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			return
 		}
 
-		if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
-			writeError(w, "unsupported_grant_type", "Only device code grant type is supported")
+		// Check for duplicate parameters
+		for key, values := range r.Form {
+			if len(values) > 1 {
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
+				return
+			}
+		}
+
+		grantType := r.Form.Get("grant_type")
+		if grantType == "" {
+			writeError(w, "invalid_request", "grant_type is REQUIRED (Section 3.4)")
+			return
+		}
+
+		if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
+			writeError(w, "unsupported_grant_type", "grant_type must be urn:ietf:params:oauth:grant-type:device_code")
 			return
 		}
 
 		deviceCode := r.Form.Get("device_code")
 		if deviceCode == "" {
-			writeError(w, "invalid_request", "Missing device_code parameter")
+			writeError(w, "invalid_request", "device_code is REQUIRED (Section 3.4)")
 			return
 		}
 
@@ -84,19 +107,21 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		if err != nil {
 			switch {
 			case errors.Is(err, deviceflow.ErrInvalidDeviceCode):
-				writeError(w, "invalid_grant", "Invalid device code")
+				writeError(w, "invalid_grant", "Invalid or unknown device code")
 			case errors.Is(err, deviceflow.ErrExpiredCode):
 				writeError(w, "expired_token", "Device code has expired")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
 				writeError(w, "authorization_pending", "User has not yet completed authorization")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down", "Polling too frequently")
+				writeError(w, "slow_down", "Polling too frequently, increase polling interval by 5 seconds")
 			default:
 				writeError(w, "server_error", err.Error())
 			}
 			return
 		}
 
+		// Set required headers
+		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, token)
 	}
 }
@@ -170,6 +195,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 	}
 }
 
+// writeJSON writes a JSON response with appropriate headers
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -178,16 +204,17 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	}
 }
 
-// writeError sends an RFC 8628 compliant error response
+// writeError sends an RFC 8628 compliant error response with consistent formatting
 func writeError(w http.ResponseWriter, code string, description string) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusBadRequest)
 	resp := struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description,omitempty"`
 	}{
 		Error:            code,
-		ErrorDescription: description,
+		ErrorDescription: strings.TrimSpace(description),
 	}
 	writeJSON(w, resp)
 }
