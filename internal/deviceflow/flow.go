@@ -128,6 +128,14 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 
 	verificationURI := f.baseURL + "/device"
 
+	// Calculate expiry times per RFC 8628 section 3.2
+	expiresIn := int(f.expiryDuration.Seconds())
+
+	// Per RFC 8628 section 3.2: ensure minimum TTL is sufficient
+	if expiresIn <= f.userCodeLength*2 {
+		expiresIn = f.userCodeLength * 2
+	}
+
 	// Construct verification_uri_complete per RFC 8628 section 3.3.1
 	// This provides a verification URI that includes the user_code to enable
 	// non-textual transmission methods like QR codes while maintaining
@@ -135,14 +143,8 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	values := url.Values{"code": {userCode}}
 	verificationURIComplete := verificationURI + "?" + values.Encode()
 
-	// Calculate expiry times per RFC 8628
-	expiresAt := time.Now().Add(f.expiryDuration)
-	expiresIn := int(f.expiryDuration.Seconds())
-
-	// Per RFC 8628 section 3.2: ensure minimum TTL is sufficient
-	if expiresIn <= f.userCodeLength*2 {
-		expiresIn = f.userCodeLength * 2
-	}
+	// Calculate expiry timestamp from validated expiresIn
+	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,
@@ -306,29 +308,33 @@ func generateSecureCode(length int) (string, error) {
 
 func generateUserCode(length int) (string, error) {
 	const charset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters per RFC 8628 section 6.1
+	const charsetLen = len(charset)
 
 	if length < 4 || length%2 != 0 {
 		return "", errors.New("invalid user code length")
 	}
 
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
+	// Generate random bytes for each character position
+	randBytes := make([]byte, length)
+	if _, err := rand.Read(randBytes); err != nil {
 		return "", err
 	}
 
-	var code []byte
-	// Calculate output length with separator
-	totalLen := length + 1
-	// Pre-allocate output slice
-	code = make([]byte, 0, totalLen)
+	// Allocate the exact size needed including separator
+	code := make([]byte, length+1)
+	partLen := length / 2
 
-	for i := 0; i < length; i++ {
-		// Add the separator after half the characters
-		if i == length/2 {
-			code = append(code, '-')
-		}
-		// Add the next random character
-		code = append(code, charset[int(bytes[i])%len(charset)])
+	// Fill first half
+	for i := 0; i < partLen; i++ {
+		code[i] = charset[int(randBytes[i])%charsetLen]
+	}
+
+	// Add separator
+	code[partLen] = '-'
+
+	// Fill second half
+	for i := 0; i < partLen; i++ {
+		code[partLen+1+i] = charset[int(randBytes[partLen+i])%charsetLen]
 	}
 
 	return string(code), nil
