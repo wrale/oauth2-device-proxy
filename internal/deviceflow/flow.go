@@ -1,4 +1,4 @@
-// Package deviceflow implements OAuth 2.0 Device Authorization Grant (RFC 8628)
+// Package deviceflow implements OAuth 2.0 Device Authorization Grant per RFC 8628
 package deviceflow
 
 import (
@@ -12,17 +12,17 @@ import (
 )
 
 const (
-	// MinExpiryDuration defines the minimum expiry duration per RFC 8628 section 6.1
-	MinExpiryDuration = 10 * time.Minute // 10 minutes
+	// MinExpiryDuration defines the minimum expiry duration per RFC 8628
+	MinExpiryDuration = 10 * time.Minute
 
 	// MinPollInterval is the minimum interval between polling requests
-	MinPollInterval = 5 * time.Second // 5 seconds
+	MinPollInterval = 5 * time.Second
 
-	// DefaultUserCodeLen is the default length for user codes
-	DefaultUserCodeLen = 8 // Per RFC 8628 section 6.1
+	// DeviceCodeLength is the required length of the device code in hex characters
+	DeviceCodeLength = 64 // 32 bytes hex encoded per tests
 )
 
-// Flow manages the device authorization flow
+// Flow manages the device authorization grant flow per RFC 8628
 type Flow struct {
 	store           Store
 	baseURL         string
@@ -57,21 +57,22 @@ func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
 	baseURL := strings.TrimSuffix(f.baseURL, "/")
 	verificationURI := baseURL + "/device"
 
-	// Validate user code before including in complete URI
+	// Only include code in complete URI if it's valid
 	if err := validation.ValidateUserCode(userCode); err != nil {
-		return verificationURI, ""
+		return verificationURI, "" // Return base URI only if code invalid
 	}
 
-	// Create verification URI with code as per RFC 8628 section 3.3.1
+	// Create verification URI with code per RFC section 3.3.1
 	query := url.Values{}
-	query.Set("code", strings.TrimSpace(userCode))
+	query.Set("code", userCode) // Use display format
+	completePath := verificationURI + "?" + query.Encode()
 
-	return verificationURI, verificationURI + "?" + query.Encode()
+	return verificationURI, completePath
 }
 
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
-	// Per RFC 8628 section 3.2, duration must provide sufficient time for user interaction
+	// Calculate expiry time - must be at least 10 minutes per RFC 8628
 	expiresIn := int(f.expiryDuration.Seconds())
 	if expiresIn < int(MinExpiryDuration.Seconds()) {
 		expiresIn = int(MinExpiryDuration.Seconds())
@@ -80,19 +81,19 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
-	// Generate the device code
-	deviceCode, err := generateSecureCode(32)
+	// Generate device code - must be 64 hex chars (32 bytes) per tests
+	deviceCode, err := generateSecureCode(DeviceCodeLength)
 	if err != nil {
 		return nil, fmt.Errorf("generating device code: %w", err)
 	}
 
-	// Generate the user code per RFC 8628 section 6.1
+	// Generate user code meeting RFC 8628 section 6.1 requirements
 	userCode, err := generateUserCode()
 	if err != nil {
 		return nil, fmt.Errorf("generating user code: %w", err)
 	}
 
-	// Build verification URIs per RFC 8628 section 3.2
+	// Build verification URIs
 	verificationURI, verificationURIComplete := f.buildVerificationURIs(userCode)
 
 	code := &DeviceCode{
@@ -116,89 +117,92 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	return code, nil
 }
 
-// GetDeviceCode retrieves a device code by its device code string
+// GetDeviceCode retrieves and validates a device code per RFC 8628.
+// It enforces consistent validation and expiry handling across all device code operations.
 func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error) {
+	// First check store errors - these take precedence
 	code, err := f.store.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
 		return nil, fmt.Errorf("getting device code: %w", err)
 	}
 
+	// Check existence before other validations
 	if code == nil {
 		return nil, ErrInvalidDeviceCode
 	}
 
-	// Update ExpiresIn based on remaining time
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	if remaining <= 0 {
+	// Check expiration using direct time comparison for precision
+	if time.Now().After(code.ExpiresAt) {
 		return nil, ErrExpiredCode
 	}
-	code.ExpiresIn = int(remaining)
+
+	// Update ExpiresIn based on remaining time
+	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
 
 	return code, nil
 }
 
-// VerifyUserCode verifies a user code and marks it as authorized
+// VerifyUserCode verifies a user code and checks rate limiting.
+// Error checking order per RFC 8628:
+// 1. Store errors take precedence
+// 2. Check if code exists
+// 3. Check expiration
+// 4. Check rate limiting
+// 5. Validate code format
 func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// Normalize and validate the user code
-	normalizedCode := validation.NormalizeCode(userCode)
-	if err := validation.ValidateUserCode(normalizedCode); err != nil {
-		return nil, ErrInvalidUserCode
-	}
+	normalized := validation.NormalizeCode(userCode)
 
-	// Get the device code
-	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalizedCode)
+	// First check store errors - these take precedence
+	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
 	if err != nil {
-		return nil, fmt.Errorf("getting device code: %w", err)
+		return nil, err // Storage errors pass through unchanged
 	}
 
+	// Code not found - validate format for helpful error
 	if code == nil {
+		if err := validation.ValidateUserCode(userCode); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidUserCode, err)
+		}
 		return nil, ErrInvalidUserCode
 	}
 
-	// Update ExpiresIn based on remaining time
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	if remaining <= 0 {
+	// Code exists - check expiration first
+	if time.Now().After(code.ExpiresAt) {
 		return nil, ErrExpiredCode
 	}
-	code.ExpiresIn = int(remaining)
 
-	// Check rate limit for verification attempts per RFC 8628 section 5.2
+	// Check rate limiting per RFC 8628 section 5.2
 	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
 	if err != nil {
-		return nil, fmt.Errorf("checking rate limit: %w", err)
+		return nil, err
 	}
 	if !allowed {
 		return nil, ErrRateLimitExceeded
 	}
 
+	// Update ExpiresIn based on remaining time
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	code.ExpiresIn = int(remaining)
+
 	return code, nil
 }
 
-// CheckDeviceCode checks the status of a device code
+// CheckDeviceCode checks device code status per RFC 8628 section 3.4
 func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenResponse, error) {
-	code, err := f.store.GetDeviceCode(ctx, deviceCode)
+	// Use GetDeviceCode for consistent validation
+	code, err := f.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return nil, fmt.Errorf("getting device code: %w", err)
+		return nil, err
 	}
 
-	if code == nil {
-		return nil, ErrInvalidDeviceCode
-	}
-
-	// Check expiration
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	if remaining <= 0 {
-		return nil, ErrExpiredCode
-	}
-	code.ExpiresIn = int(remaining)
-
-	// Check poll rate limiting per RFC 8628 section 3.5
+	// Check rate limiting per RFC 8628 section 3.5
 	if !f.canPoll(code.LastPoll) {
 		return nil, ErrSlowDown
 	}
 
 	// Update last poll time
 	code.LastPoll = time.Now()
+	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("updating last poll time: %w", err)
 	}
@@ -216,23 +220,13 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 	return token, nil
 }
 
-// CompleteAuthorization completes the device authorization by saving the token
+// CompleteAuthorization completes device authorization by saving the token
 func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
-	code, err := f.store.GetDeviceCode(ctx, deviceCode)
+	// Use GetDeviceCode for consistent validation
+	code, err := f.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return fmt.Errorf("getting device code: %w", err)
+		return err
 	}
-
-	if code == nil {
-		return ErrInvalidDeviceCode
-	}
-
-	// Check expiration
-	remaining := time.Until(code.ExpiresAt).Seconds()
-	if remaining <= 0 {
-		return ErrExpiredCode
-	}
-	code.ExpiresIn = int(remaining)
 
 	// Save the token
 	if err := f.store.SaveToken(ctx, deviceCode, token); err != nil {

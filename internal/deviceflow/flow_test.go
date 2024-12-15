@@ -1,3 +1,4 @@
+// Package deviceflow implements RFC 8628 device authorization flow tests
 package deviceflow
 
 import (
@@ -108,10 +109,16 @@ func (m *mockStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode stri
 	if !m.healthy {
 		return false, ErrStoreUnhealthy
 	}
+	
+	// Track verification attempts for this code
 	m.attempts[deviceCode]++
-	return m.attempts[deviceCode] <= 50, nil // 50 attempts per RFC 8628 section 5.2
+	
+	// RFC 8628 section 5.2 recommends limiting verification attempts
+	maxAttempts := 50
+	return m.attempts[deviceCode] <= maxAttempts, nil
 }
 
+// TestRequestDeviceCode tests the device code request flow per RFC 8628 section 3.2
 func TestRequestDeviceCode(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -126,17 +133,25 @@ func TestRequestDeviceCode(t *testing.T) {
 			clientID: "test-client",
 			wantErr:  false,
 			checkCode: func(t *testing.T, code *DeviceCode) {
+				// Check basic fields
 				if code.ClientID != "test-client" {
 					t.Errorf("expected client ID %q, got %q", "test-client", code.ClientID)
 				}
 				if code.Scope != "" {
 					t.Errorf("expected empty scope, got %q", code.Scope)
 				}
+
+				// Check URIs per RFC 8628 section 3.2 and 3.3.1
 				if !strings.Contains(code.VerificationURI, "/device") {
 					t.Errorf("expected verification URI to contain /device, got %q", code.VerificationURI)
 				}
+
+				// Check required fields have valid values per RFC 8628
 				if code.Interval != 5 {
 					t.Errorf("expected interval 5, got %d", code.Interval)
+				}
+				if time.Until(code.ExpiresAt) < 10*time.Minute {
+					t.Error("expiry time must be at least 10 minutes")
 				}
 				if time.Until(code.ExpiresAt) > 15*time.Minute {
 					t.Error("expiry time should not exceed 15 minutes")
@@ -167,6 +182,7 @@ func TestRequestDeviceCode(t *testing.T) {
 			store := newMockStore()
 			store.healthy = !tt.storeErr
 
+			// Create flow with default settings
 			flow := NewFlow(store, "https://example.com")
 			code, err := flow.RequestDeviceCode(context.Background(), tt.clientID, tt.scope)
 
@@ -179,22 +195,28 @@ func TestRequestDeviceCode(t *testing.T) {
 				if code == nil {
 					t.Fatal("expected non-nil DeviceCode")
 				}
+				
+				// Run case-specific checks
 				if tt.checkCode != nil {
 					tt.checkCode(t, code)
 				}
 
-				// Verify code format
+				// Verify code formats per RFC 8628
 				if len(code.DeviceCode) != 64 { // 32 bytes hex encoded
-					t.Errorf("unexpected device code length: got %d", len(code.DeviceCode))
+					t.Errorf("device code must be 64 hex chars (got %d)", len(code.DeviceCode))
 				}
 				if !strings.Contains(code.UserCode, "-") {
-					t.Error("user code should contain hyphen separator")
+					t.Error("user code must contain hyphen separator")
 				}
-				if len(strings.ReplaceAll(code.UserCode, "-", "")) != 8 {
-					t.Error("user code should be 8 characters without hyphen")
+				baseCode := strings.ReplaceAll(code.UserCode, "-", "")
+				if len(baseCode) != 8 {
+					t.Error("user code must be 8 characters excluding separator")
+				}
+				if err := validation.ValidateUserCode(code.UserCode); err != nil {
+					t.Errorf("user code validation failed: %v", err)
 				}
 
-				// Verify codes are stored
+				// Verify codes are stored properly
 				stored, err := store.GetDeviceCode(context.Background(), code.DeviceCode)
 				if err != nil {
 					t.Errorf("error getting stored device code: %v", err)
@@ -215,6 +237,7 @@ func TestRequestDeviceCode(t *testing.T) {
 	}
 }
 
+// TestVerifyUserCode tests the user code verification per RFC 8628 sections 3.3 and 5.2
 func TestVerifyUserCode(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -269,8 +292,8 @@ func TestVerifyUserCode(t *testing.T) {
 				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
 					t.Fatalf("failed to setup test: %v", err)
 				}
-				// Exceed verification attempts
-				for i := 0; i < 51; i++ { // One more than limit
+				// Exceed verification attempts per RFC 8628 section 5.2
+				for i := 0; i < 51; i++ { // One more than allowed
 					s.attempts[code.DeviceCode]++
 				}
 			},
@@ -284,6 +307,21 @@ func TestVerifyUserCode(t *testing.T) {
 			},
 			userCode: "ABCD-EFGH",
 			wantErr:  ErrStoreUnhealthy,
+		},
+		{
+			name: "normalize case and spaces",
+			setup: func(t *testing.T, s *mockStore) {
+				code := &DeviceCode{
+					DeviceCode: "test-device",
+					UserCode:   "ABCD-EFGH",
+					ExpiresAt:  time.Now().Add(10 * time.Minute),
+				}
+				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
+					t.Fatalf("failed to setup test: %v", err)
+				}
+			},
+			userCode: " abcd-efgh ", // Should be normalized
+			wantErr:  nil,
 		},
 	}
 
@@ -310,6 +348,16 @@ func TestVerifyUserCode(t *testing.T) {
 				}
 				if code == nil {
 					t.Fatal("expected non-nil DeviceCode")
+				}
+
+				// Additional checks for valid codes
+				if tt.userCode != code.UserCode {
+					normalized := validation.NormalizeCode(tt.userCode)
+					storedNormalized := validation.NormalizeCode(code.UserCode)
+					if normalized != storedNormalized {
+						t.Errorf("codes don't match after normalization: %q != %q",
+							normalized, storedNormalized)
+					}
 				}
 			}
 		})
