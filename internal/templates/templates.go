@@ -138,9 +138,11 @@ func (w *SafeWriter) SetStatusCode(code int) {
 
 // VerifyData holds data for the code verification page
 type VerifyData struct {
-	PrefilledCode string
-	CSRFToken     string
-	Error         string
+	PrefilledCode         string
+	CSRFToken             string
+	Error                 string
+	VerificationURI       string // Per RFC 8628 section 3.2
+	VerificationQRCodeSVG string // QR code for verification_uri_complete per RFC 8628 section 3.3.1
 }
 
 // RenderVerify renders the code verification page
