@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
@@ -138,11 +137,6 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	userCode, err := generateUserCode()
 	if err != nil {
 		return nil, fmt.Errorf("generating user code: %w", err)
-	}
-
-	// Validate the generated code meets all RFC requirements
-	if err := validation.ValidateUserCode(userCode); err != nil {
-		return nil, fmt.Errorf("validating user code: %w", err)
 	}
 
 	verificationURI := f.baseURL + "/device"
@@ -311,35 +305,76 @@ func generateSecureCode(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// selectChar chooses a random available character that hasn't exceeded maxAllowed frequency
+func selectChar(charset []byte, freqs map[byte]int, maxAllowed int) (byte, error) {
+	// Create list of available characters that haven't hit max frequency
+	available := make([]byte, 0, len(charset))
+	for _, c := range charset {
+		if freqs[c] < maxAllowed {
+			available = append(available, c)
+		}
+	}
+
+	if len(available) == 0 {
+		return 0, fmt.Errorf("no characters available under frequency limit %d", maxAllowed)
+	}
+
+	// Generate random index
+	randByte := make([]byte, 1)
+	if _, err := rand.Read(randByte); err != nil {
+		return 0, err
+	}
+
+	// Select and track character
+	selected := available[int(randByte[0])%len(available)]
+	freqs[selected]++
+
+	return selected, nil
+}
+
 // generateUserCode generates a user-friendly code per RFC 8628 section 6.1
 func generateUserCode() (string, error) {
-	// Pre-allocate exactly the needed space (4 chars + hyphen + 4 chars)
-	code := make([]byte, validation.MinLength+1)
+	maxAttempts := 100 // Prevent infinite loops
+	maxAllowed := 2    // Maximum times a character can appear per RFC 8628
 
-	// Generate random bytes for character selection
-	randBytes := make([]byte, validation.MinLength)
-	if _, err := rand.Read(randBytes); err != nil {
-		return "", fmt.Errorf("generating random bytes: %w", err)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Pre-allocate exactly the needed space (4 chars + hyphen + 4 chars)
+		code := make([]byte, validation.MinLength+1)
+		freqs := make(map[byte]int)
+		valid := true
+
+		// Fill first half
+		for i := 0; i < validation.MinGroupSize && valid; i++ {
+			char, err := selectChar([]byte(validation.ValidCharset), freqs, maxAllowed)
+			if err != nil {
+				valid = false
+				break
+			}
+			code[i] = char
+		}
+
+		// Add separator
+		code[validation.MinGroupSize] = '-'
+
+		// Fill second half
+		for i := 0; i < validation.MinGroupSize && valid; i++ {
+			char, err := selectChar([]byte(validation.ValidCharset), freqs, maxAllowed)
+			if err != nil {
+				valid = false
+				break
+			}
+			code[validation.MinGroupSize+1+i] = char
+		}
+
+		if valid {
+			generated := string(code)
+			if err := validation.ValidateUserCode(generated); err == nil {
+				return generated, nil
+			}
+		}
 	}
 
-	// Use validation.ValidCharset directly
-	charset := []byte(validation.ValidCharset)
-	charsetLen := len(charset)
-
-	// Fill first half
-	for i := 0; i < validation.MinGroupSize; i++ {
-		code[i] = charset[int(randBytes[i])%charsetLen]
-	}
-
-	// Add separator
-	code[validation.MinGroupSize] = '-'
-
-	// Fill second half
-	for i := 0; i < validation.MinGroupSize; i++ {
-		code[validation.MinGroupSize+1+i] = charset[int(randBytes[validation.MinGroupSize+i])%charsetLen]
-	}
-
-	return string(code), nil
+	return "", fmt.Errorf("failed to generate valid code after %d attempts", maxAttempts)
 }
 
 // normalizeCode converts a user code to storage format
