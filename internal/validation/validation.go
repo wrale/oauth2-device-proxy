@@ -13,11 +13,11 @@ const (
 	MinLength    = 8   // Minimum total length excluding separator
 	MaxLength    = 8   // Maximum total length excluding separator
 	MinGroupSize = 4   // Minimum characters per group
-	MinEntropy   = 2.0 // Minimum required entropy bits
+	MinEntropy   = 2.0 // Minimum required entropy bits per RFC 8628 section 6.1
 )
 
 // ValidCharset contains the allowed characters for user codes
-const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters
+const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters per RFC 8628
 
 var (
 	// Format validation regex - enforces exact format with valid charset
@@ -36,21 +36,20 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("invalid user code %q: %s", e.Code, e.Message)
 }
 
-// ValidateUserCode checks if a user code meets all requirements
+// ValidateUserCode checks if a user code meets all requirements from RFC 8628
 func ValidateUserCode(code string) error {
 	// Normalize code for validation
 	code = strings.ToUpper(strings.TrimSpace(code))
 	baseCode := strings.ReplaceAll(code, "-", "")
 
-	// First check exact length without separator
+	// 1. Basic format validation (length, charset, structure)
 	if len(baseCode) != MinLength {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("length must be between %d and %d characters", MinLength, MaxLength),
+			Message: fmt.Sprintf("length must be exactly %d characters (excluding separator)", MinLength),
 		}
 	}
 
-	// Check format and character set
 	if !codeRegex.MatchString(code) {
 		return &ValidationError{
 			Code:    code,
@@ -58,23 +57,23 @@ func ValidateUserCode(code string) error {
 		}
 	}
 
-	// Check entropy first since it's the most fundamental requirement
+	// 2. Entropy validation (primary security requirement per RFC 8628 section 6.1)
 	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
 		return &ValidationError{
 			Code:    code,
-			Message: fmt.Sprintf("entropy %.2f bits is below required minimum %.2f bits", entropy, MinEntropy),
+			Message: fmt.Sprintf("insufficient entropy: %.2f bits (minimum required: %.2f bits)", entropy, MinEntropy),
 		}
 	}
 
-	// Check for repeated characters
+	// 3. Additional security constraints - repeated character checks
 	charCounts := make(map[rune]int)
-	maxAllowed := 2 // Stricter limit for better security
+	maxAllowed := 2 // Maximum repeats allowed to maintain code security
 	for _, char := range baseCode {
 		charCounts[char]++
 		if charCounts[char] > maxAllowed {
 			return &ValidationError{
 				Code:    code,
-				Message: fmt.Sprintf("too many repeated characters: %c appears more than %d times", char, maxAllowed),
+				Message: fmt.Sprintf("too many repeated characters: %c appears more than %d times (maximum allowed for security)", char, maxAllowed),
 			}
 		}
 	}
