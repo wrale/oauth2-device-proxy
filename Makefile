@@ -57,7 +57,7 @@ COMPOSE_DEV_FILE=docker-compose.dev.yml
 .PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build docker-build docker-push docker-run docker-stop compose-up compose-down
 .PHONY: build-image push-image x y z r verify-deps test-deps test-clean redis-start redis-stop
-.PHONY: integration-test integration-deps integration-clean
+.PHONY: integration-test integration-deps integration-clean compose-dev
 
 help: ## Display available commands
 	@echo "Available Commands:"
@@ -152,32 +152,10 @@ install-tools: ## Install development tools
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-integration-deps: ## Start integration test dependencies
+integration-deps: ## Start integration test environment
 	@echo "==> Starting integration test environment"
-	$(COMPOSE_ENGINE) up -d
-	@echo "Waiting for services to be ready..."
-	@for i in $$(seq 1 120); do \
-		KC_READY=false; \
-		if curl -s http://localhost:8081/health/ready >/dev/null 2>&1; then \
-			KC_READY=true; \
-		fi; \
-		if [ "$$KC_READY" = "true" ] && \
-		   curl -s http://localhost:8080/health >/dev/null 2>&1; then \
-			echo "All services ready"; \
-			break; \
-		fi; \
-		if [ $$i -eq 120 ]; then \
-			echo "Timeout waiting for services"; \
-			$(MAKE) integration-clean; \
-			exit 1; \
-		fi; \
-		if [ "$$KC_READY" = "true" ]; then \
-			echo "Keycloak ready, waiting for proxy..."; \
-		else \
-			echo "Waiting for Keycloak... $$i/120"; \
-		fi; \
-		sleep 5; \
-	done
+	$(COMPOSE_ENGINE) up --wait --wait-timeout 300 || ($(COMPOSE_ENGINE) logs && exit 1)
+	@echo "==> Waiting for services..."
 
 integration-clean: ## Clean up integration test environment
 	@echo "==> Cleaning integration test environment"
