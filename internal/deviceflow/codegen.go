@@ -22,7 +22,7 @@ func generateSecureCode(length int) (string, error) {
 // selectRandomChar selects a random character from available set without modulo bias
 func selectRandomChar(available []rune) (rune, error) {
 	availLen := len(available)
-	// Calculate required bytes for random selection
+	// Calculate required bytes for random selection per RFC 8628 section 6.1
 	maxNeeded := 256 - (256 % availLen)
 
 	for {
@@ -48,55 +48,77 @@ func generateUserCode() (string, error) {
 	charset := []rune(validation.ValidCharset)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		var builder strings.Builder
+		var codeBuilder strings.Builder
 		freqs := make(map[rune]int)
 		success := true
 
-		// Generate both groups with the same logic
-		for group := 0; group < 2; group++ {
-			if group > 0 {
-				builder.WriteRune('-')
+		// Generate first group of characters
+		for i := 0; i < validation.MinGroupSize; i++ {
+			// Find available characters
+			var available []rune
+			for _, c := range charset {
+				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+					available = append(available, c)
+				}
 			}
 
-			// Generate characters for this group
-			for i := 0; i < validation.MinGroupSize; i++ {
-				// Find available characters
-				var available []rune
-				for _, c := range charset {
-					if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
-						available = append(available, c)
-					}
-				}
-
-				if len(available) == 0 {
-					success = false
-					break
-				}
-
-				// Select random character with no modulo bias
-				char, err := selectRandomChar(available)
-				if err != nil {
-					return "", err
-				}
-
-				builder.WriteRune(char)
-				freqs[char]++
-			}
-
-			if !success {
+			if len(available) == 0 {
+				success = false
 				break
 			}
+
+			char, err := selectRandomChar(available)
+			if err != nil {
+				return "", fmt.Errorf("selecting random character: %w", err)
+			}
+
+			codeBuilder.WriteRune(char)
+			freqs[char]++
 		}
 
 		if !success {
 			continue
 		}
 
-		// Get final code and validate
-		code := builder.String()
-		if err := validation.ValidateUserCode(code); err == nil {
-			return code, nil
+		// Add separator
+		codeBuilder.WriteRune('-')
+
+		// Generate second group of characters
+		for i := 0; i < validation.MinGroupSize; i++ {
+			// Find available characters
+			var available []rune
+			for _, c := range charset {
+				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+					available = append(available, c)
+				}
+			}
+
+			if len(available) == 0 {
+				success = false
+				break
+			}
+
+			char, err := selectRandomChar(available)
+			if err != nil {
+				return "", fmt.Errorf("selecting random character: %w", err)
+			}
+
+			codeBuilder.WriteRune(char)
+			freqs[char]++
 		}
+
+		if !success {
+			continue
+		}
+
+		// Validate the generated code before returning
+		code := codeBuilder.String()
+		if err := validation.ValidateUserCode(code); err != nil {
+			continue // Try again if validation fails
+		}
+
+		// RFC 8628 Section 6.1 validation all passed
+		return code, nil
 	}
 
 	return "", fmt.Errorf("failed to generate valid code after %d attempts", maxAttempts)

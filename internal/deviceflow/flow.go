@@ -4,6 +4,8 @@ package deviceflow
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
@@ -27,6 +29,24 @@ func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 		opt(f)
 	}
 	return f
+}
+
+// buildVerificationURIs creates the verification URIs per RFC 8628 sections 3.2 and 3.3.1
+func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
+	// Normalize base URL and build verification URI
+	verificationURI := strings.TrimSuffix(f.baseURL, "/") + "/device"
+
+	// Build complete URI with validated user code
+	if err := validation.ValidateUserCode(userCode); err != nil {
+		// If code invalid, return base URI without complete URI
+		return verificationURI, verificationURI
+	}
+
+	// Safely encode the user code
+	query := url.Values{}
+	query.Set("code", userCode)
+
+	return verificationURI, verificationURI + "?" + query.Encode()
 }
 
 // RequestDeviceCode initiates a new device authorization flow
@@ -56,14 +76,8 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		return nil, fmt.Errorf("generating user code: %w", err)
 	}
 
-	verificationURI := f.baseURL + "/device"
-
-	// Build verification_uri_complete without URL encoding to avoid null bytes
-	// Format per RFC 8628 section 3.3.1, using simple path joining
-	verificationURIComplete := verificationURI
-	if err := validation.ValidateUserCode(userCode); err == nil {
-		verificationURIComplete = verificationURI + "?code=" + userCode
-	}
+	// Build verification URIs
+	verificationURI, verificationURIComplete := f.buildVerificationURIs(userCode)
 
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,

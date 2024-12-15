@@ -37,6 +37,10 @@ func (s *server) handleHealth() http.HandlerFunc {
 // Device code request handler implements RFC 8628 section 3.2
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set required headers per RFC 8628 section 3.2
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+
 		if err := r.ParseForm(); err != nil {
 			writeError(w, "invalid_request", "Invalid request format")
 			return
@@ -45,7 +49,7 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 		// Check for duplicate parameters per RFC 8628 section 3.1
 		for _, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.1)")
 				return
 			}
 		}
@@ -64,8 +68,6 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			return
 		}
 
-		// Set required headers per RFC 8628 section 3.2
-		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, code)
 	}
 }
@@ -73,6 +75,10 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 // Device token polling handler implements RFC 8628 section 3.4
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set required headers per RFC 8628
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+
 		if err := r.ParseForm(); err != nil {
 			writeError(w, "invalid_request", "Invalid request format")
 			return
@@ -81,7 +87,7 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		// Check for duplicate parameters
 		for _, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
+				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4)")
 				return
 			}
 		}
@@ -111,17 +117,15 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			case errors.Is(err, deviceflow.ErrExpiredCode):
 				writeError(w, "expired_token", "Device code has expired")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
-				writeError(w, "authorization_pending", "User has not yet completed authorization")
+				writeError(w, "authorization_pending", "Authorization is pending; please continue polling")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down", "Polling too frequently, increase polling interval by 5 seconds")
+				writeError(w, "slow_down", "Polling too frequently; increase polling interval by 5 seconds")
 			default:
 				writeError(w, "server_error", err.Error())
 			}
 			return
 		}
 
-		// Set required headers
-		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, token)
 	}
 }
@@ -195,20 +199,26 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 	}
 }
 
-// writeJSON writes a JSON response with appropriate headers
+// writeJSON writes a JSON response with appropriate headers per RFC 8628
 func writeJSON(w http.ResponseWriter, v interface{}) {
+	// Ensure Cache-Control and Content-Type are set for all JSON responses
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		// If JSON encoding fails, return a 500 error
+		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
 		return
 	}
 }
 
-// writeError sends an RFC 8628 compliant error response with consistent formatting
+// writeError sends an RFC 8628 compliant error response
 func writeError(w http.ResponseWriter, code string, description string) {
-	w.Header().Set("Content-Type", "application/json")
+	// Ensure proper headers are set
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
+
 	resp := struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description,omitempty"`
@@ -216,5 +226,7 @@ func writeError(w http.ResponseWriter, code string, description string) {
 		Error:            code,
 		ErrorDescription: strings.TrimSpace(description),
 	}
-	writeJSON(w, resp)
+
+	// Return JSON-encoded error
+	json.NewEncoder(w).Encode(resp)
 }
