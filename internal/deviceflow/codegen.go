@@ -23,7 +23,6 @@ func generateSecureCode(length int) (string, error) {
 func generateUserCode() (string, error) {
 	maxAttempts := 100 // Prevent infinite loops
 	charset := []rune(validation.ValidCharset)
-	charsetLen := len(charset)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var builder strings.Builder
