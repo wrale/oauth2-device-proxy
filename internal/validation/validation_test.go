@@ -1,3 +1,4 @@
+// Package validation provides code validation utilities for OAuth2 device flow
 package validation
 
 import (
@@ -31,13 +32,13 @@ func TestValidateUserCode(t *testing.T) {
 			name:    "too short",
 			code:    "BCD-KLM",
 			wantErr: true,
-			errMsg:  "length must be between",
+			errMsg:  "length must be exactly 8 characters",
 		},
 		{
 			name:    "too long",
 			code:    "BCDHJK-LMNPQR",
 			wantErr: true,
-			errMsg:  "length must be between",
+			errMsg:  "length must be exactly 8 characters",
 		},
 		{
 			name:    "missing separator",
@@ -89,7 +90,7 @@ func TestValidateUserCode(t *testing.T) {
 				return
 			}
 			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
-				t.Errorf("ValidateUserCode() expected error containing %q, got %v", tt.errMsg, err)
+				t.Errorf("ValidateUserCode() error = %v, want error containing %q", err, tt.errMsg)
 			}
 		})
 	}
