@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
 	"github.com/jmdots/oauth2-device-proxy/internal/templates"
@@ -56,31 +55,9 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			return
 		}
 
-		// Per RFC 8628 section 3.2, convert ExpiresAt to ExpiresIn
-		expiresIn := int(time.Until(code.ExpiresAt).Seconds())
-		if expiresIn <= 0 {
-			writeError(w, "server_error", "Invalid expiry time")
-			return
-		}
-
-		// Prepare response per RFC 8628 section 3.2
-		resp := struct {
-			DeviceCode              string `json:"device_code"`
-			UserCode                string `json:"user_code"`
-			VerificationURI         string `json:"verification_uri"`
-			VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
-			ExpiresIn               int    `json:"expires_in"`
-			Interval                int    `json:"interval"`
-		}{
-			DeviceCode:              code.DeviceCode,
-			UserCode:                code.UserCode,
-			VerificationURI:         code.VerificationURI,
-			VerificationURIComplete: code.VerificationURIComplete,
-			ExpiresIn:               expiresIn,
-			Interval:                code.Interval,
-		}
-
-		writeJSON(w, resp)
+		// The ExpiresIn field is now directly included in the DeviceCode struct
+		// per RFC 8628 section 3.2, so we can write it directly
+		writeJSON(w, code)
 	}
 }
 

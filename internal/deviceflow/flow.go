@@ -28,7 +28,8 @@ type DeviceCode struct {
 	DeviceCode      string    `json:"device_code"`
 	UserCode        string    `json:"user_code"`
 	VerificationURI string    `json:"verification_uri"`
-	ExpiresAt       time.Time `json:"-"` // Use expires_in for client response
+	ExpiresAt       time.Time `json:"-"`          // Internal tracking
+	ExpiresIn       int       `json:"expires_in"` // RFC 8628 response field
 	Interval        int       `json:"interval"`
 
 	// Optional verification_uri_complete field per RFC 8628 section 3.3.1
@@ -134,12 +135,17 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	values := url.Values{"code": {userCode}}
 	verificationURIComplete := verificationURI + "?" + values.Encode()
 
+	// Calculate expiry times per RFC 8628
+	expiresAt := time.Now().Add(f.expiryDuration)
+	expiresIn := int(f.expiryDuration.Seconds())
+
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: verificationURIComplete,
-		ExpiresAt:               time.Now().Add(f.expiryDuration),
+		ExpiresAt:               expiresAt,
+		ExpiresIn:               expiresIn,
 		Interval:                int(f.pollInterval.Seconds()),
 		ClientID:                clientID,
 		Scope:                   scope,
@@ -165,6 +171,12 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 	}
 
 	if time.Now().After(code.ExpiresAt) {
+		return nil, ErrExpiredCode
+	}
+
+	// Update ExpiresIn based on remaining time
+	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
+	if code.ExpiresIn <= 0 {
 		return nil, ErrExpiredCode
 	}
 
@@ -194,6 +206,12 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 	}
 	if !allowed {
 		return nil, ErrRateLimitExceeded
+	}
+
+	// Update ExpiresIn based on remaining time
+	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
+	if code.ExpiresIn <= 0 {
+		return nil, ErrExpiredCode
 	}
 
 	return code, nil
