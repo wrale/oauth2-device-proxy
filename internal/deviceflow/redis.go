@@ -63,8 +63,8 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 	pipe.Set(ctx, userKey, code.DeviceCode, ttl)
 
 	// Create rate limit key with same expiry
-	rateKey := ratePrefix + code.DeviceCode
-	pipe.Set(ctx, rateKey, "0", ttl)
+	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, code.DeviceCode)
+	pipe.Del(ctx, timeKey) // Start fresh with new code
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -180,8 +180,9 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 	// Delete token if exists
 	pipe.Del(ctx, tokenPrefix+deviceCode)
 
-	// Delete rate limit key
-	pipe.Del(ctx, ratePrefix+deviceCode)
+	// Delete rate limit keys
+	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
+	pipe.Del(ctx, timeKey)
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -194,14 +195,12 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 // CheckDeviceCodeAttempts increments and checks the rate limit for device code verification attempts
 // Returns true if the attempt is allowed, false if the rate limit is exceeded per RFC 8628 section 5.2
 func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
-	key := ratePrefix + deviceCode
+	// Create keys
+	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
+	now := time.Now().Unix()
 
 	// Use pipeline to perform operations atomically
 	pipe := s.client.Pipeline()
-
-	// Get current timestamp for sliding window calculation
-	timeKey := fmt.Sprintf("%s:time", key)
-	now := time.Now().Unix()
 
 	// Add timestamp to sorted set with score = current timestamp
 	pipe.ZAdd(ctx, timeKey, redis.Z{
