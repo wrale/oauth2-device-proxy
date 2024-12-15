@@ -8,19 +8,21 @@ type DeviceCode struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`
 	VerificationURI string `json:"verification_uri"`
-	ExpiresIn       int    `json:"expires_in"` // Remaining time in seconds
-	Interval        int    `json:"interval"`   // Poll interval in seconds
+	// ExpiresIn is required and must be calculated based on remaining time
+	ExpiresIn int `json:"expires_in"` // Remaining time in seconds
+	// Interval sets minimum polling wait time
+	Interval int `json:"interval"` // Poll interval in seconds
 
 	// Optional verification_uri_complete field per RFC 8628 section 3.3.1
 	// Enables non-textual transmission of the verification URI (e.g., QR codes)
 	// The URI includes the user code to minimize user input required
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
 
-	// Additional fields for internal tracking
-	ExpiresAt time.Time `json:"-"` // Absolute expiry time
-	ClientID  string    `json:"-"` // OAuth2 client identifier
-	Scope     string    `json:"-"` // OAuth2 scope
-	LastPoll  time.Time `json:"-"` // Last poll timestamp
+	// Required response fields per RFC 8628 section 3.2
+	ExpiresAt time.Time `json:"expires_at"` // Absolute expiry time
+	ClientID  string    `json:"client_id"`  // OAuth2 client identifier
+	Scope     string    `json:"scope"`      // OAuth2 scope
+	LastPoll  time.Time `json:"last_poll"`  // Last poll timestamp
 }
 
 // TokenResponse represents the OAuth2 token response per RFC 8628 section 3.5

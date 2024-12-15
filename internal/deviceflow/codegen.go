@@ -1,9 +1,11 @@
+// Package deviceflow implements OAuth2 device flow code generation
 package deviceflow
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
@@ -20,45 +22,33 @@ func generateSecureCode(length int) (string, error) {
 // generateUserCode generates a user-friendly code per RFC 8628 section 6.1
 func generateUserCode() (string, error) {
 	maxAttempts := 100 // Prevent infinite loops
-	maxAllowed := 2    // Maximum times a character can appear per RFC 8628
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// First half + hyphen + second half (8 characters total)
-		code := make([]byte, validation.MinGroupSize*2+1)
+		// Generate each half of the code separately
+		var parts [2]string
 		freqs := make(map[byte]int)
-		valid := true
 
-		// Fill first half (4 chars)
-		for i := 0; i < validation.MinGroupSize && valid; i++ {
-			char, err := selectChar([]byte(validation.ValidCharset), freqs, maxAllowed)
-			if err != nil {
-				valid = false
-				break
-			}
-			code[i] = char
-		}
-
-		// Add hyphen separator
-		if valid {
-			code[validation.MinGroupSize] = '-'
-
-			// Fill second half (4 more chars)
-			for i := 0; i < validation.MinGroupSize && valid; i++ {
-				char, err := selectChar([]byte(validation.ValidCharset), freqs, maxAllowed)
+		for half := 0; half < 2; half++ {
+			var chars []byte
+			for i := 0; i < validation.MinGroupSize; i++ {
+				char, err := selectChar([]byte(validation.ValidCharset), freqs, 2)
 				if err != nil {
-					valid = false
-					break
+					break // Invalid character distribution, try again
 				}
-				code[validation.MinGroupSize+1+i] = char
+				chars = append(chars, char)
 			}
+			if len(chars) != validation.MinGroupSize {
+				continue // Retry if invalid length
+			}
+			parts[half] = string(chars)
 		}
 
-		// Validate the generated code
-		if valid {
-			generated := string(code)
-			if err := validation.ValidateUserCode(generated); err == nil {
-				return generated, nil
-			}
+		// Join with hyphen
+		code := fmt.Sprintf("%s-%s", parts[0], parts[1])
+
+		// Validate final code meets all requirements
+		if err := validation.ValidateUserCode(code); err == nil {
+			return code, nil
 		}
 	}
 

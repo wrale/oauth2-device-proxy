@@ -39,7 +39,6 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		expiresIn = minDuration
 	}
 
-	// Calculate expiry time from validated duration
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
@@ -66,7 +65,7 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: verificationURIComplete,
-		ExpiresIn:               expiresIn, // Required by RFC 8628
+		ExpiresIn:               expiresIn,
 		Interval:                int(f.pollInterval.Seconds()),
 		ExpiresAt:               expiresAt,
 		ClientID:                clientID,
@@ -156,7 +155,7 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 		return nil, ErrSlowDown
 	}
 
-	// Update last poll time
+	// Update last poll time and ExpiresIn
 	code.LastPoll = time.Now()
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("updating last poll time: %w", err)
