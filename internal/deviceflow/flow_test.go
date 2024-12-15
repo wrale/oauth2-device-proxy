@@ -16,6 +16,7 @@ type mockStore struct {
 	deviceCodes map[string]*DeviceCode
 	userCodes   map[string]string // user code -> device code
 	tokens      map[string]*TokenResponse
+	attempts    map[string]int // device code -> attempt count
 	healthy     bool
 }
 
@@ -24,6 +25,7 @@ func newMockStore() *mockStore {
 		deviceCodes: make(map[string]*DeviceCode),
 		userCodes:   make(map[string]string),
 		tokens:      make(map[string]*TokenResponse),
+		attempts:    make(map[string]int),
 		healthy:     true,
 	}
 }
@@ -89,6 +91,7 @@ func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) err
 	delete(m.deviceCodes, deviceCode)
 	delete(m.userCodes, normalizeCode(code.UserCode))
 	delete(m.tokens, deviceCode)
+	delete(m.attempts, deviceCode)
 	return nil
 }
 
@@ -97,6 +100,14 @@ func (m *mockStore) CheckHealth(ctx context.Context) error {
 		return ErrStoreUnhealthy
 	}
 	return nil
+}
+
+func (m *mockStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
+	if !m.healthy {
+		return false, ErrStoreUnhealthy
+	}
+	m.attempts[deviceCode]++
+	return m.attempts[deviceCode] <= 50, nil // 50 attempts per RFC 8628 section 5.2
 }
 
 func TestRequestDeviceCode(t *testing.T) {
@@ -244,6 +255,25 @@ func TestVerifyUserCode(t *testing.T) {
 			},
 			userCode: "ABCD-EFGH",
 			wantErr:  ErrExpiredCode,
+		},
+		{
+			name: "rate limit exceeded",
+			setup: func(t *testing.T, s *mockStore) {
+				code := &DeviceCode{
+					DeviceCode: "test-device",
+					UserCode:   "ABCD-EFGH",
+					ExpiresAt:  time.Now().Add(10 * time.Minute),
+				}
+				if err := s.SaveDeviceCode(context.Background(), code); err != nil {
+					t.Fatalf("failed to setup test: %v", err)
+				}
+				// Exceed verification attempts
+				for i := 0; i < 51; i++ { // One more than limit
+					s.attempts[code.DeviceCode]++
+				}
+			},
+			userCode: "ABCD-EFGH",
+			wantErr:  ErrRateLimitExceeded,
 		},
 		{
 			name: "store error",
