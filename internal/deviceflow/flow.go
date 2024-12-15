@@ -24,15 +24,22 @@ var (
 
 // DeviceCode represents the device authorization details per RFC 8628 section 3.2
 type DeviceCode struct {
-	DeviceCode              string    `json:"device_code"`
-	UserCode                string    `json:"user_code"`
-	VerificationURI         string    `json:"verification_uri"`
-	VerificationURIComplete string    `json:"verification_uri_complete,omitempty"`
-	ExpiresAt               time.Time `json:"expires_at"`
-	Interval                int       `json:"interval"`
-	ClientID                string    `json:"client_id"`
-	Scope                   string    `json:"scope,omitempty"`
-	LastPoll                time.Time `json:"last_poll"`
+	// Required fields per RFC 8628 section 3.2
+	DeviceCode      string    `json:"device_code"`
+	UserCode        string    `json:"user_code"`
+	VerificationURI string    `json:"verification_uri"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	Interval        int       `json:"interval"`
+
+	// Optional verification_uri_complete field per RFC 8628 section 3.3.1
+	// Enables non-textual transmission of the verification URI (e.g., QR codes)
+	// The URI includes the user code to minimize user input required
+	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
+
+	// Additional fields for internal tracking
+	ClientID string    `json:"client_id"`
+	Scope    string    `json:"scope,omitempty"`
+	LastPoll time.Time `json:"last_poll"`
 }
 
 // TokenResponse represents the OAuth2 token response
@@ -120,7 +127,10 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 
 	verificationURI := f.baseURL + "/device"
 
-	// Construct complete verification URI per RFC 8628 section 3.3.1
+	// Construct verification_uri_complete per RFC 8628 section 3.3.1
+	// This provides a verification URI that includes the user_code to enable
+	// non-textual transmission methods like QR codes while maintaining
+	// the requirement for users to verify the code matches their device
 	values := url.Values{"code": {userCode}}
 	verificationURIComplete := verificationURI + "?" + values.Encode()
 
