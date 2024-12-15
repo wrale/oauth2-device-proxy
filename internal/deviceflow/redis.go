@@ -15,7 +15,7 @@ const (
 	userPrefix      = "user:"
 	tokenPrefix     = "token:"
 	ratePrefix      = "rate:"
-	maxAttempts     = 50 // Maximum verification attempts per device code per RFC 8628
+	maxAttempts     = 50 // Maximum verification attempts per device code per RFC 8628 section 5.2
 	rateLimitWindow = 5  // Time window in minutes for rate limit tracking
 )
 
@@ -61,6 +61,10 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 	// Set the user code reference
 	userKey := userPrefix + normalizeCode(code.UserCode)
 	pipe.Set(ctx, userKey, code.DeviceCode, ttl)
+
+	// Create rate limit key with same expiry
+	rateKey := ratePrefix + code.DeviceCode
+	pipe.Set(ctx, rateKey, "0", ttl)
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -188,31 +192,41 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 }
 
 // CheckDeviceCodeAttempts increments and checks the rate limit for device code verification attempts
-// Returns true if the attempt is allowed, false if the rate limit is exceeded
+// Returns true if the attempt is allowed, false if the rate limit is exceeded per RFC 8628 section 5.2
 func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
 	key := ratePrefix + deviceCode
-	window := time.Duration(rateLimitWindow) * time.Minute
 
-	// Use pipeline to increment and check atomically
+	// Use pipeline to perform operations atomically
 	pipe := s.client.Pipeline()
 
-	// Increment counter
-	incrCmd := pipe.Incr(ctx, key)
+	// Get current timestamp for sliding window calculation
+	timeKey := fmt.Sprintf("%s:time", key)
+	now := time.Now().Unix()
 
-	// Ensure expiry is set (in case of new key)
-	pipe.Expire(ctx, key, window)
+	// Add timestamp to sorted set with score = current timestamp
+	pipe.ZAdd(ctx, timeKey, redis.Z{
+		Score:  float64(now),
+		Member: now,
+	})
+
+	// Remove attempts outside the rate limit window
+	windowStart := now - int64(rateLimitWindow*60)
+	pipe.ZRemRangeByScore(ctx, timeKey, "0", fmt.Sprintf("%d", windowStart))
+
+	// Count attempts within the window
+	countCmd := pipe.ZCard(ctx, timeKey)
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return false, fmt.Errorf("checking rate limit: %w", err)
 	}
 
-	// Get the count (from the increment operation)
-	count, err := incrCmd.Result()
+	// Get count from pipeline result
+	count, err := countCmd.Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return false, fmt.Errorf("getting rate limit count: %w", err)
+		return false, fmt.Errorf("getting attempt count: %w", err)
 	}
 
-	// Allow the attempt if under the limit
+	// Allow if under the limit specified in RFC 8628 section 5.2
 	return count <= maxAttempts, nil
 }
