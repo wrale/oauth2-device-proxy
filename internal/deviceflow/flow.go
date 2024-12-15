@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
 
 // Common errors
@@ -70,7 +72,7 @@ func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 		baseURL:         baseURL,
 		expiryDuration:  15 * time.Minute,
 		pollInterval:    5 * time.Second,
-		userCodeLength:  8,
+		userCodeLength:  validation.MinLength, // Use validation package constants
 		rateLimitWindow: time.Minute,
 		maxPollsPerMin:  12,
 	}
@@ -116,43 +118,46 @@ func WithRateLimit(window time.Duration, maxPolls int) Option {
 
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
+	// Calculate and validate expiry duration per RFC 8628 section 3.2
+	expiresIn := int(f.expiryDuration.Seconds())
+	if expiresIn <= f.userCodeLength*2 {
+		// Double the minimum user code length per RFC 8628
+		expiresIn = f.userCodeLength * 2
+	}
+
+	// Calculate expiry timestamp from validated expiresIn
+	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+	// Generate device code
 	deviceCode, err := generateSecureCode(32)
 	if err != nil {
 		return nil, fmt.Errorf("generating device code: %w", err)
 	}
 
-	userCode, err := generateUserCode(f.userCodeLength)
+	// Generate user code with RFC 8628 section 6.1 compliant character set
+	userCode, err := generateUserCode()
 	if err != nil {
 		return nil, fmt.Errorf("generating user code: %w", err)
 	}
 
-	verificationURI := f.baseURL + "/device"
-
-	// Calculate expiry times per RFC 8628 section 3.2
-	expiresIn := int(f.expiryDuration.Seconds())
-
-	// Per RFC 8628 section 3.2: ensure minimum TTL is sufficient
-	if expiresIn <= f.userCodeLength*2 {
-		expiresIn = f.userCodeLength * 2
+	// Validate the generated code meets all RFC requirements
+	if err := validation.ValidateUserCode(userCode); err != nil {
+		return nil, fmt.Errorf("validating user code: %w", err)
 	}
 
+	verificationURI := f.baseURL + "/device"
+
 	// Construct verification_uri_complete per RFC 8628 section 3.3.1
-	// This provides a verification URI that includes the user_code to enable
-	// non-textual transmission methods like QR codes while maintaining
-	// the requirement for users to verify the code matches their device
 	values := url.Values{"code": {userCode}}
 	verificationURIComplete := verificationURI + "?" + values.Encode()
-
-	// Calculate expiry timestamp from validated expiresIn
-	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: verificationURIComplete,
-		ExpiresIn:               expiresIn,
-		ExpiresAt:               expiresAt,
+		ExpiresIn:               expiresIn, // Required by RFC 8628
+		ExpiresAt:               expiresAt, // Internal tracking
 		Interval:                int(f.pollInterval.Seconds()),
 		ClientID:                clientID,
 		Scope:                   scope,
@@ -194,7 +199,7 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 // VerifyUserCode verifies a user code and marks it as authorized
 func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
 	// Get the device code first
-	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalizeCode(userCode))
+	code, err := f.store.GetDeviceCodeByUserCode(ctx, validation.NormalizeCode(userCode))
 	if err != nil {
 		return nil, fmt.Errorf("getting device code: %w", err)
 	}
@@ -306,40 +311,38 @@ func generateSecureCode(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func generateUserCode(length int) (string, error) {
-	const charset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters per RFC 8628 section 6.1
-	const charsetLen = len(charset)
+// generateUserCode generates a user-friendly code per RFC 8628 section 6.1
+func generateUserCode() (string, error) {
+	// Pre-allocate exactly the needed space (4 chars + hyphen + 4 chars)
+	code := make([]byte, validation.MinLength+1)
 
-	if length < 4 || length%2 != 0 {
-		return "", errors.New("invalid user code length")
-	}
-
-	// Generate random bytes for each character position
-	randBytes := make([]byte, length)
+	// Generate random bytes for character selection
+	randBytes := make([]byte, validation.MinLength)
 	if _, err := rand.Read(randBytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("generating random bytes: %w", err)
 	}
 
-	// Allocate the exact size needed including separator
-	code := make([]byte, length+1)
-	partLen := length / 2
+	// Use validation.ValidCharset directly
+	charset := []byte(validation.ValidCharset)
+	charsetLen := len(charset)
 
 	// Fill first half
-	for i := 0; i < partLen; i++ {
+	for i := 0; i < validation.MinGroupSize; i++ {
 		code[i] = charset[int(randBytes[i])%charsetLen]
 	}
 
 	// Add separator
-	code[partLen] = '-'
+	code[validation.MinGroupSize] = '-'
 
 	// Fill second half
-	for i := 0; i < partLen; i++ {
-		code[partLen+1+i] = charset[int(randBytes[partLen+i])%charsetLen]
+	for i := 0; i < validation.MinGroupSize; i++ {
+		code[validation.MinGroupSize+1+i] = charset[int(randBytes[validation.MinGroupSize+i])%charsetLen]
 	}
 
 	return string(code), nil
 }
 
+// normalizeCode converts a user code to storage format
 func normalizeCode(code string) string {
-	return strings.ToUpper(strings.ReplaceAll(code, "-", ""))
+	return validation.NormalizeCode(code)
 }
