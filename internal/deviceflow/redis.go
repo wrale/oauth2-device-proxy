@@ -16,7 +16,7 @@ const (
 	tokenPrefix     = "token:"
 	ratePrefix      = "rate:"
 	maxAttempts     = 50 // Maximum verification attempts per device code per RFC 8628 section 5.2
-	rateLimitWindow = 5  // Time window in minutes for rate limit tracking
+	rateLimitWindow = 5  // Time window in minutes for rate limit tracking per RFC 8628 for rolling window
 )
 
 // RedisStore implements the Store interface using Redis
@@ -64,7 +64,8 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 
 	// Create rate limit key with same expiry
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, code.DeviceCode)
-	pipe.Del(ctx, timeKey) // Start fresh with new code
+	pipe.Del(ctx, timeKey)         // Start fresh with new code
+	pipe.Expire(ctx, timeKey, ttl) // Ensure rate limit data expires with code
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -181,8 +182,7 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 	pipe.Del(ctx, tokenPrefix+deviceCode)
 
 	// Delete rate limit keys
-	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
-	pipe.Del(ctx, timeKey)
+	pipe.Del(ctx, fmt.Sprintf("%s%s:time", ratePrefix, deviceCode))
 
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -192,40 +192,60 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 	return nil
 }
 
-// CheckDeviceCodeAttempts increments and checks the rate limit for device code verification attempts
-// Returns true if the attempt is allowed, false if the rate limit is exceeded per RFC 8628 section 5.2
+// CheckDeviceCodeAttempts implements rate limiting for device code verification per RFC 8628 section 5.2
+// Uses Redis sorted sets to maintain an accurate sliding window of attempts
 func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
-	// Create keys
+	// Create rate limit key
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
 	now := time.Now().Unix()
 
-	// Use pipeline to perform operations atomically
+	// Use pipeline to perform operations atomically to prevent race conditions
 	pipe := s.client.Pipeline()
 
-	// Add timestamp to sorted set with score = current timestamp
+	// Check if the device code exists first
+	pipe.Exists(ctx, devicePrefix+deviceCode)
+
+	// Add current attempt to sorted set with timestamp as score
 	pipe.ZAdd(ctx, timeKey, redis.Z{
 		Score:  float64(now),
 		Member: now,
 	})
 
-	// Remove attempts outside the rate limit window
+	// Remove attempts outside the rolling window
 	windowStart := now - int64(rateLimitWindow*60)
-	pipe.ZRemRangeByScore(ctx, timeKey, "0", fmt.Sprintf("%d", windowStart))
+	pipe.ZRemRangeByScore(ctx, timeKey, "-inf", fmt.Sprintf("%d", windowStart))
 
-	// Count attempts within the window
-	countCmd := pipe.ZCard(ctx, timeKey)
+	// Count attempts within current window
+	countCmd := pipe.ZCount(ctx, timeKey, fmt.Sprintf("%d", windowStart), fmt.Sprintf("%d", now))
 
-	// Execute pipeline
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return false, fmt.Errorf("checking rate limit: %w", err)
+	// Execute pipeline atomically
+	cmders, err := pipe.Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("executing rate limit pipeline: %w", err)
 	}
 
-	// Get count from pipeline result
+	// Check if device code exists
+	exists, err := cmders[0].(*redis.IntCmd).Result()
+	if err != nil {
+		return false, fmt.Errorf("checking device code existence: %w", err)
+	}
+	if exists == 0 {
+		return false, nil // Return false if device code doesn't exist
+	}
+
+	// Get attempt count from the pipeline result
 	count, err := countCmd.Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	if err != nil {
 		return false, fmt.Errorf("getting attempt count: %w", err)
 	}
 
-	// Allow if under the limit specified in RFC 8628 section 5.2
-	return count <= maxAttempts, nil
+	// Allow if under limit per RFC 8628 section 5.2
+	// "The authorization server MAY make the number of polling attempts allowed configurable"
+	allowed := count <= maxAttempts
+	if !allowed {
+		// Log excessive attempts for monitoring
+		s.client.Incr(ctx, fmt.Sprintf("%s%s:blocked", ratePrefix, deviceCode))
+	}
+
+	return allowed, nil
 }
