@@ -72,11 +72,21 @@ func (s *TestSuite) WaitForServices() error {
 				lastErr = fmt.Errorf("checking %s health: %w", svc.name, err)
 				break
 			}
-			resp.Body.Close()
 
-			if resp.StatusCode != http.StatusOK {
+			if err := func() error {
+				defer func() {
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						s.T.Logf("Error closing response body for %s: %v", svc.name, closeErr)
+					}
+				}()
+
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("%s returned status %d", svc.name, resp.StatusCode)
+				}
+				return nil
+			}(); err != nil {
 				allHealthy = false
-				lastErr = fmt.Errorf("%s returned status %d", svc.name, resp.StatusCode)
+				lastErr = err
 				break
 			}
 		}
