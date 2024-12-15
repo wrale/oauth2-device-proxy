@@ -205,16 +205,20 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 
+	// Handle JSON encoding errors properly
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		// If JSON encoding fails, return a 500 error
-		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		// Attempt to write a basic error, ignoring encoding errors
+		rawError := []byte(`{"error":"server_error","error_description":"Failed to encode response"}`)
+		w.Write(rawError) // Ignore write error as we can't do anything about it
 		return
 	}
 }
 
 // writeError sends an RFC 8628 compliant error response
 func writeError(w http.ResponseWriter, code string, description string) {
-	// Ensure proper headers are set
+	// Ensure proper headers are set before any potential errors
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
@@ -227,6 +231,10 @@ func writeError(w http.ResponseWriter, code string, description string) {
 		ErrorDescription: strings.TrimSpace(description),
 	}
 
-	// Return JSON-encoded error
-	json.NewEncoder(w).Encode(resp)
+	// Handle JSON encoding errors properly
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// If JSON encoding fails after headers are sent, we can only attempt a raw write
+		rawError := []byte(`{"error":"server_error","error_description":"Failed to encode error response"}`)
+		w.Write(rawError) // Ignore write error as response is already in flight
+	}
 }
