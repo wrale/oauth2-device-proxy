@@ -1,6 +1,8 @@
+// Package integration provides validation functions for testing RFC 8628 compliance
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
