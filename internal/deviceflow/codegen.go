@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
@@ -21,57 +22,84 @@ func generateSecureCode(length int) (string, error) {
 // generateUserCode generates a user-friendly code per RFC 8628 section 6.1
 func generateUserCode() (string, error) {
 	maxAttempts := 100 // Prevent infinite loops
+	charset := []rune(validation.ValidCharset)
+	charsetLen := len(charset)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// Create a string builder for each half
-		var parts [2]string
+		var builder strings.Builder
 		freqs := make(map[rune]int)
 		success := true
 
-		for half := 0; half < 2; half++ {
-			chars := make([]byte, validation.MinGroupSize)
-
-			// Generate each character ensuring max frequency not exceeded
-			for i := 0; i < validation.MinGroupSize; i++ {
-				// Find available characters
-				var available []byte
-				for _, c := range validation.ValidCharset {
-					if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
-						available = append(available, byte(c))
-					}
+		// Generate first group
+		for i := 0; i < validation.MinGroupSize; i++ {
+			// Find available characters
+			var available []rune
+			for _, c := range charset {
+				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+					available = append(available, c)
 				}
-
-				if len(available) == 0 {
-					success = false
-					break
-				}
-
-				// Generate random index
-				b := make([]byte, 1)
-				if _, err := rand.Read(b); err != nil {
-					return "", fmt.Errorf("generating random byte: %w", err)
-				}
-				idx := int(b[0]) % len(available)
-
-				// Select and track character
-				chars[i] = available[idx]
-				freqs[rune(available[idx])]++
 			}
 
-			if !success {
+			if len(available) == 0 {
+				success = false
 				break
 			}
-			parts[half] = string(chars)
+
+			// Generate random index
+			b := make([]byte, 1)
+			if _, err := rand.Read(b); err != nil {
+				return "", fmt.Errorf("generating random byte: %w", err)
+			}
+			// Map random byte to available index
+			idx := int(b[0]) % len(available)
+
+			// Add selected character
+			char := available[idx]
+			builder.WriteRune(char)
+			freqs[char]++
 		}
 
 		if !success {
-			continue // Try again if character distribution failed
+			continue
 		}
 
-		// Join with hyphen
-		code := fmt.Sprintf("%s-%s", parts[0], parts[1])
+		// Add separator
+		builder.WriteRune('-')
 
-		// Validate meets all RFC 8628 requirements
+		// Generate second group
+		for i := 0; i < validation.MinGroupSize; i++ {
+			// Find available characters
+			var available []rune
+			for _, c := range charset {
+				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+					available = append(available, c)
+				}
+			}
+
+			if len(available) == 0 {
+				success = false
+				break
+			}
+
+			// Generate random index
+			b := make([]byte, 1)
+			if _, err := rand.Read(b); err != nil {
+				return "", fmt.Errorf("generating random byte: %w", err)
+			}
+			idx := int(b[0]) % len(available)
+
+			// Add selected character
+			char := available[idx]
+			builder.WriteRune(char)
+			freqs[char]++
+		}
+
+		if !success {
+			continue
+		}
+
+		// Get final code and validate
+		code := builder.String()
 		if err := validation.ValidateUserCode(code); err == nil {
 			return code, nil
 		}
