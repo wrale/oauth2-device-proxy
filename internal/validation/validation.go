@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Validation settings
+// Validation settings based on RFC 8628 section 6.1
 const (
 	MinLength    = 8   // Minimum total length excluding separator
 	MaxLength    = 8   // Maximum total length excluding separator
@@ -16,8 +16,8 @@ const (
 	MinEntropy   = 2.0 // Minimum required entropy bits per RFC 8628 section 6.1
 )
 
-// ValidCharset contains the allowed characters for user codes
-const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters per RFC 8628
+// ValidCharset contains the RECOMMENDED characters (excluding similar-looking chars) from RFC 8628 section 6.1
+const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // RFC 8628: A-Z excluding vowels and similar characters
 
 var (
 	// Format validation regex - enforces exact format with valid charset
@@ -26,7 +26,7 @@ var (
 		charsetPattern, MinGroupSize, charsetPattern, MinGroupSize))
 )
 
-// ValidationError represents a code validation error
+// ValidationError represents a code validation error with specific context
 type ValidationError struct {
 	Code    string
 	Message string
@@ -36,44 +36,59 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("invalid user code %q: %s", e.Code, e.Message)
 }
 
-// ValidateUserCode checks if a user code meets all requirements from RFC 8628
+// ValidateUserCode checks if a user code meets all RFC 8628 requirements in order:
+// 1. Basic format validation (length, charset, structure)
+// 2. Entropy validation (primary security requirement, section 6.1)
+// 3. Additional security constraints (character distribution)
 func ValidateUserCode(code string) error {
-	// Normalize code for validation
+	// Normalize code for validation, preserving original for error messages
+	originalCode := code
 	code = strings.ToUpper(strings.TrimSpace(code))
 	baseCode := strings.ReplaceAll(code, "-", "")
 
-	// 1. Basic format validation (length, charset, structure)
+	// Step 1: Basic format validation
 	if len(baseCode) != MinLength {
 		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("length must be exactly %d characters (excluding separator)", MinLength),
+			Code:    originalCode,
+			Message: fmt.Sprintf("code must be exactly %d characters (excluding separator)", MinLength),
 		}
 	}
 
 	if !codeRegex.MatchString(code) {
 		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("code must be in format XXXX-XXXX using only allowed characters: %s", ValidCharset),
+			Code: originalCode,
+			Message: fmt.Sprintf(
+				"code must be in format XXXX-XXXX using only allowed characters: %s (per RFC 8628)",
+				ValidCharset,
+			),
 		}
 	}
 
-	// 2. Entropy validation (primary security requirement per RFC 8628 section 6.1)
-	if entropy := calculateEntropy(baseCode); entropy < MinEntropy {
+	// Step 2: Entropy validation (RFC 8628 section 6.1 security requirement)
+	entropy := calculateEntropy(baseCode)
+	if entropy < MinEntropy {
 		return &ValidationError{
-			Code:    code,
-			Message: fmt.Sprintf("insufficient entropy: %.2f bits (minimum required: %.2f bits)", entropy, MinEntropy),
+			Code: originalCode,
+			Message: fmt.Sprintf(
+				"insufficient entropy: %.2f bits (minimum %.2f bits required by RFC 8628)",
+				entropy, MinEntropy,
+			),
 		}
 	}
 
-	// 3. Additional security constraints - repeated character checks
+	// Step 3: Character distribution constraints
+	// RFC 8628 suggests limiting character repetition to maintain high entropy
 	charCounts := make(map[rune]int)
-	maxAllowed := 2 // Maximum repeats allowed to maintain code security
+	maxAllowed := 2 // Maximum character repetition while maintaining entropy
 	for _, char := range baseCode {
 		charCounts[char]++
 		if charCounts[char] > maxAllowed {
 			return &ValidationError{
-				Code:    code,
-				Message: fmt.Sprintf("too many repeated characters: %c appears more than %d times (maximum allowed for security)", char, maxAllowed),
+				Code: originalCode,
+				Message: fmt.Sprintf(
+					"for security, character %c cannot appear more than %d times per code",
+					char, maxAllowed,
+				),
 			}
 		}
 	}
@@ -81,13 +96,14 @@ func ValidateUserCode(code string) error {
 	return nil
 }
 
-// calculateEntropy calculates the Shannon entropy of the code in bits
+// calculateEntropy calculates the Shannon entropy of the code in bits per RFC 8628
+// This measures the randomness/unpredictability of the code, which is critical for security
 func calculateEntropy(code string) float64 {
 	if code == "" {
 		return 0
 	}
 
-	// Count character frequencies
+	// Calculate character frequencies
 	freqs := make(map[rune]int)
 	for _, char := range code {
 		freqs[char]++
@@ -101,15 +117,16 @@ func calculateEntropy(code string) float64 {
 		entropy -= prob * math.Log2(prob)
 	}
 
+	// Return actual bits of entropy
 	return entropy
 }
 
-// NormalizeCode converts a user code to canonical format
+// NormalizeCode converts a user code to the canonical storage format
 func NormalizeCode(code string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), "-", ""))
 }
 
-// FormatCode converts a normalized code back to display format
+// FormatCode converts a normalized code into the RFC 8628 display format (XXXX-XXXX)
 func FormatCode(code string) string {
 	if len(code) < MinLength {
 		return code
