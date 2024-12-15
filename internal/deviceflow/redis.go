@@ -1,3 +1,4 @@
+// Package deviceflow implements device authorization storage with Redis
 package deviceflow
 
 import (
@@ -15,8 +16,9 @@ const (
 	userPrefix      = "user:"
 	tokenPrefix     = "token:"
 	ratePrefix      = "rate:"
-	maxAttempts     = 50 // Maximum verification attempts per device code per RFC 8628 section 5.2
-	rateLimitWindow = 5  // Time window in minutes for rate limit tracking per RFC 8628 for rolling window
+	maxAttempts     = 50  // Maximum verification attempts per device code per RFC 8628 section 5.2
+	rateLimitWindow = 5   // Time window in minutes for rate limit tracking
+	errorBackoff    = 300 // Error backoff in seconds when rate limit exceeded (per RFC 8628)
 )
 
 // RedisStore implements the Store interface using Redis
@@ -51,23 +53,24 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 		return fmt.Errorf("marshaling device code: %w", err)
 	}
 
-	// Use a transaction to set both device and user code keys
+	// Use pipeline to set all keys atomically
 	pipe := s.client.Pipeline()
 
-	// Set the device code
+	// Set device code with expiry
 	deviceKey := devicePrefix + code.DeviceCode
 	pipe.Set(ctx, deviceKey, data, ttl)
 
-	// Set the user code reference
+	// Set user code reference
 	userKey := userPrefix + normalizeCode(code.UserCode)
 	pipe.Set(ctx, userKey, code.DeviceCode, ttl)
 
-	// Create rate limit key with same expiry
+	// Initialize rate limit tracking
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, code.DeviceCode)
-	pipe.Del(ctx, timeKey)         // Start fresh with new code
-	pipe.Expire(ctx, timeKey, ttl) // Ensure rate limit data expires with code
+	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, code.DeviceCode)
+	pipe.Del(ctx, timeKey, backoffKey) // Clean start
+	pipe.Expire(ctx, timeKey, ttl)     // Ensure cleanup
 
-	// Execute pipeline
+	// Execute all operations
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("saving device code: %w", err)
 	}
@@ -95,7 +98,7 @@ func (s *RedisStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Dev
 
 // GetDeviceCodeByUserCode retrieves a device code using the user code
 func (s *RedisStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// Get the device code from the user code reference
+	// Get device code from user code reference
 	deviceCode, err := s.client.Get(ctx, userPrefix+normalizeCode(userCode)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -104,13 +107,12 @@ func (s *RedisStore) GetDeviceCodeByUserCode(ctx context.Context, userCode strin
 		return nil, fmt.Errorf("getting user code reference: %w", err)
 	}
 
-	// Get the full device code data
 	return s.GetDeviceCode(ctx, deviceCode)
 }
 
 // SaveToken stores an access token for a device code
 func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error {
-	// Get the device code first to check expiry
+	// Verify device code exists
 	code, err := s.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
 		return fmt.Errorf("getting device code: %w", err)
@@ -119,21 +121,31 @@ func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *To
 		return ErrInvalidDeviceCode
 	}
 
-	// Calculate remaining TTL
+	// Check expiry
 	ttl := time.Until(code.ExpiresAt)
 	if ttl <= 0 {
 		return ErrExpiredCode
 	}
 
-	// Marshal the token
+	// Marshal token
 	data, err := json.Marshal(token)
 	if err != nil {
 		return fmt.Errorf("marshaling token: %w", err)
 	}
 
-	// Save the token with the same expiry as the device code
+	// Use pipeline for atomic update
+	pipe := s.client.Pipeline()
+
+	// Save token with device code expiry
 	tokenKey := tokenPrefix + deviceCode
-	if err := s.client.Set(ctx, tokenKey, data, ttl).Err(); err != nil {
+	pipe.Set(ctx, tokenKey, data, ttl)
+
+	// Clean up rate limit data on success
+	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
+	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
+	pipe.Del(ctx, timeKey, backoffKey)
+
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("saving token: %w", err)
 	}
 
@@ -158,9 +170,9 @@ func (s *RedisStore) GetToken(ctx context.Context, deviceCode string) (*TokenRes
 	return &token, nil
 }
 
-// DeleteDeviceCode removes a device code and its associated data
+// DeleteDeviceCode removes a device code and associated data
 func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) error {
-	// Get the device code to find the user code
+	// Get code first for user code cleanup
 	code, err := s.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
 		return fmt.Errorf("getting device code: %w", err)
@@ -169,22 +181,19 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 		return nil // Already deleted
 	}
 
-	// Use pipeline to delete all related keys
+	// Delete all associated keys atomically
 	pipe := s.client.Pipeline()
 
-	// Delete device code
+	// Main keys
 	pipe.Del(ctx, devicePrefix+deviceCode)
-
-	// Delete user code reference
 	pipe.Del(ctx, userPrefix+normalizeCode(code.UserCode))
-
-	// Delete token if exists
 	pipe.Del(ctx, tokenPrefix+deviceCode)
 
-	// Delete rate limit keys
-	pipe.Del(ctx, fmt.Sprintf("%s%s:time", ratePrefix, deviceCode))
+	// Rate limit keys
+	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
+	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
+	pipe.Del(ctx, timeKey, backoffKey)
 
-	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("deleting device code: %w", err)
 	}
@@ -193,58 +202,81 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 }
 
 // CheckDeviceCodeAttempts implements rate limiting for device code verification per RFC 8628 section 5.2
-// Uses Redis sorted sets to maintain an accurate sliding window of attempts
+// Uses Redis sorted sets for accurate sliding window tracking with exponential backoff
 func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
-	// Create rate limit key
+	// Get keys for atomic operations
+	deviceKey := devicePrefix + deviceCode
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
+	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
 	now := time.Now().Unix()
 
-	// Use pipeline to perform operations atomically to prevent race conditions
+	// Use pipeline for atomic operations
 	pipe := s.client.Pipeline()
 
-	// Check if the device code exists first
-	pipe.Exists(ctx, devicePrefix+deviceCode)
+	// Check device code exists
+	pipe.Exists(ctx, deviceKey)
 
-	// Add current attempt to sorted set with timestamp as score
+	// Check if in backoff period
+	pipe.Get(ctx, backoffKey)
+
+	// Log attempt in sorted set
 	pipe.ZAdd(ctx, timeKey, redis.Z{
 		Score:  float64(now),
 		Member: now,
 	})
 
-	// Remove attempts outside the rolling window
+	// Calculate sliding window
 	windowStart := now - int64(rateLimitWindow*60)
+
+	// Remove old attempts outside window
 	pipe.ZRemRangeByScore(ctx, timeKey, "-inf", fmt.Sprintf("%d", windowStart))
 
-	// Count attempts within current window
+	// Count attempts in current window
 	countCmd := pipe.ZCount(ctx, timeKey, fmt.Sprintf("%d", windowStart), fmt.Sprintf("%d", now))
 
-	// Execute pipeline atomically
+	// Execute all checks atomically
 	cmders, err := pipe.Exec(ctx)
 	if err != nil {
-		return false, fmt.Errorf("executing rate limit pipeline: %w", err)
+		return false, fmt.Errorf("executing rate limit check: %w", err)
 	}
 
-	// Check if device code exists
+	// Verify device code exists
 	exists, err := cmders[0].(*redis.IntCmd).Result()
 	if err != nil {
 		return false, fmt.Errorf("checking device code existence: %w", err)
 	}
 	if exists == 0 {
-		return false, nil // Return false if device code doesn't exist
+		return false, nil
 	}
 
-	// Get attempt count from the pipeline result
+	// Check if in backoff period
+	backoffResult := cmders[1].(*redis.StringCmd)
+	if backoffResult.Err() == nil {
+		// Still in backoff period
+		return false, nil
+	} else if !errors.Is(backoffResult.Err(), redis.Nil) {
+		return false, fmt.Errorf("checking backoff status: %w", backoffResult.Err())
+	}
+
+	// Get attempt count
 	count, err := countCmd.Result()
 	if err != nil {
 		return false, fmt.Errorf("getting attempt count: %w", err)
 	}
 
-	// Allow if under limit per RFC 8628 section 5.2
-	// "The authorization server MAY make the number of polling attempts allowed configurable"
+	// Check against limit
 	allowed := count <= maxAttempts
 	if !allowed {
-		// Log excessive attempts for monitoring
-		s.client.Incr(ctx, fmt.Sprintf("%s%s:blocked", ratePrefix, deviceCode))
+		// Set backoff period
+		if err := s.client.Set(ctx, backoffKey, now, time.Duration(errorBackoff)*time.Second).Err(); err != nil {
+			return false, fmt.Errorf("setting backoff period: %w", err)
+		}
+
+		// Log for monitoring
+		blockedKey := fmt.Sprintf("%s%s:blocked", ratePrefix, deviceCode)
+		if err := s.client.Incr(ctx, blockedKey).Err(); err != nil {
+			return false, fmt.Errorf("incrementing blocked counter: %w", err)
+		}
 	}
 
 	return allowed, nil
