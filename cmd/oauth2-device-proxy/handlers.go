@@ -42,47 +42,48 @@ func (s *server) handleHealth() http.HandlerFunc {
 // Device code request handler implements RFC 8628 section 3.2
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628 section 3.2 before any returns
+		// Set required headers per RFC 8628 section 3.2
 		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
-			writeError(w, "invalid_request", "POST method required (Section 3.1)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - POST method required")
 			return
 		}
 
 		if err := r.ParseForm(); err != nil {
-			writeError(w, "invalid_request", "Invalid request format (Section 3.1)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - Invalid request format")
 			return
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.1
 		for key, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.1): "+key)
+				handleError(w, "invalid_request", "RFC 8628 Section 3.1 - Parameters MUST NOT be included more than once: "+key)
 				return
 			}
 		}
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			writeError(w, "invalid_request", "The client_id parameter is REQUIRED (Section 3.1)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.1 - The client_id parameter is REQUIRED")
 			return
 		}
 
 		scope := r.Form.Get("scope")
 		code, err := s.flow.RequestDeviceCode(r.Context(), clientID, scope)
 		if err != nil {
+			var errMessage string
 			if errors.Is(err, deviceflow.ErrInvalidDeviceCode) {
-				writeError(w, "invalid_request", "Invalid device code format (Section 3.2)")
+				errMessage = "RFC 8628 Section 3.2 - Invalid device code format"
 			} else if errors.Is(err, deviceflow.ErrInvalidUserCode) {
-				writeError(w, "invalid_request", "Invalid user code format (Section 6.1)")
+				errMessage = "RFC 8628 Section 6.1 - Invalid user code format"
 			} else {
-				writeError(w, "server_error", "Failed to generate device code (Section 3.2)")
+				errMessage = "RFC 8628 Section 3.2 - Failed to generate device code"
 			}
+			handleError(w, "invalid_request", errMessage)
 			return
 		}
 
-		// Ensure compliant response format per RFC 8628 section 3.2
 		response := struct {
 			DeviceCode              string `json:"device_code"`
 			UserCode                string `json:"user_code"`
@@ -108,47 +109,47 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 // Device token polling handler implements RFC 8628 section 3.4
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628 before any returns
+		// Set required headers per RFC 8628 section 3.4
 		setJSONHeaders(w)
 
 		if r.Method != http.MethodPost {
-			writeError(w, "invalid_request", "POST method required (Section 3.4)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - POST method required")
 			return
 		}
 
 		if err := r.ParseForm(); err != nil {
-			writeError(w, "invalid_request", "Invalid request format (Section 3.4)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - Invalid request format")
 			return
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.4
 		for key, values := range r.Form {
 			if len(values) > 1 {
-				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4): "+key)
+				handleError(w, "invalid_request", "RFC 8628 Section 3.4 - Parameters MUST NOT be included more than once: "+key)
 				return
 			}
 		}
 
 		grantType := r.Form.Get("grant_type")
 		if grantType == "" {
-			writeError(w, "invalid_request", "The grant_type parameter is REQUIRED (Section 3.4)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The grant_type parameter is REQUIRED")
 			return
 		}
 
 		if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
-			writeError(w, "unsupported_grant_type", "Only urn:ietf:params:oauth:grant-type:device_code is supported (Section 3.4)")
+			handleError(w, "unsupported_grant_type", "RFC 8628 Section 3.4 - Only urn:ietf:params:oauth:grant-type:device_code is supported")
 			return
 		}
 
 		deviceCode := r.Form.Get("device_code")
 		if deviceCode == "" {
-			writeError(w, "invalid_request", "The device_code parameter is REQUIRED (Section 3.4)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The device_code parameter is REQUIRED")
 			return
 		}
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			writeError(w, "invalid_request", "The client_id parameter is REQUIRED for public clients (Section 3.4)")
+			handleError(w, "invalid_request", "RFC 8628 Section 3.4 - The client_id parameter is REQUIRED for public clients")
 			return
 		}
 
@@ -156,15 +157,15 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		if err != nil {
 			switch {
 			case errors.Is(err, deviceflow.ErrInvalidDeviceCode):
-				writeError(w, "invalid_grant", "The device_code is invalid or expired (Section 3.5)")
+				handleError(w, "invalid_grant", "RFC 8628 Section 3.5 - The device_code is invalid or expired")
 			case errors.Is(err, deviceflow.ErrExpiredCode):
-				writeError(w, "expired_token", "The device_code has expired (Section 3.5)")
+				handleError(w, "expired_token", "RFC 8628 Section 3.5 - The device_code has expired")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
-				writeError(w, "authorization_pending", "The authorization request is still pending (Section 3.5)")
+				handleError(w, "authorization_pending", "RFC 8628 Section 3.5 - The authorization request is still pending")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down", "Polling interval MUST be increased by 5 seconds (Section 3.5)")
+				handleError(w, "slow_down", "RFC 8628 Section 3.5 - Polling interval must be increased by 5 seconds")
 			default:
-				writeError(w, "server_error", "An unexpected error occurred processing the request (Section 3.5)")
+				handleError(w, "server_error", "RFC 8628 Section 3.5 - An unexpected error occurred processing the request")
 			}
 			return
 		}
@@ -250,35 +251,14 @@ func setJSONHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 }
 
-// handleJSONError handles JSON encoding errors with a proper error response
-func handleJSONError(w http.ResponseWriter, err error) {
-	errResponse := struct {
-		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description"`
-	}{
-		Error:            "server_error",
-		ErrorDescription: "Failed to encode response (Section 3.5)",
-	}
-	// Create error response manually as fallback
-	w.WriteHeader(http.StatusInternalServerError)
-	errorBytes, _ := json.Marshal(errResponse)
-	if _, writeErr := w.Write(errorBytes); writeErr != nil {
-		// This is a last-resort error handler. At this point, we've already
-		// failed to encode the JSON response and our fallback Write also failed.
-		// Since we can't write anything to the client, our only option is to
-		// fail silently and return, allowing the client to handle the timeout.
-		// TODO: Add logging once we have a logger configured
-		return
-	}
-}
-
-// writeError sends an RFC 8628 compliant error response
-func writeError(w http.ResponseWriter, code string, description string) {
+// handleError sends a standardized error response per RFC 8628
+func handleError(w http.ResponseWriter, code string, description string) {
+	// Headers must be set before writing status or body
 	w.WriteHeader(http.StatusBadRequest)
 
 	response := struct {
 		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description"`
+		ErrorDescription string `json:"error_description,omitempty"`
 	}{
 		Error:            code,
 		ErrorDescription: strings.TrimSpace(description),
@@ -286,5 +266,17 @@ func writeError(w http.ResponseWriter, code string, description string) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		handleJSONError(w, err)
+	}
+}
+
+// handleJSONError is called when JSON encoding itself fails
+func handleJSONError(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusInternalServerError)
+
+	// Create error response manually since JSON encoding failed
+	errResponse := []byte(`{"error":"server_error","error_description":"Failed to encode response"}`)
+	if _, writeErr := w.Write(errResponse); writeErr != nil {
+		// Log the compound error when we have logging
+		return
 	}
 }

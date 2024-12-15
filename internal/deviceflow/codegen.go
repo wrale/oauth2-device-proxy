@@ -12,11 +12,12 @@ import (
 
 // generateSecureCode generates a cryptographically secure random code of specified length
 func generateSecureCode(length int) (string, error) {
-	bytes := make([]byte, length)
+	// Convert length to bytes needed for hex encoding
+	bytes := make([]byte, (length+1)/2)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("reading random bytes: %w", err)
 	}
-	return hex.EncodeToString(bytes), nil
+	return hex.EncodeToString(bytes)[:length], nil
 }
 
 // selectRandomChar selects a random character from available set without modulo bias
@@ -44,20 +45,20 @@ func selectRandomChar(available []rune) (rune, error) {
 
 // generateUserCode generates a user-friendly code per RFC 8628 section 6.1
 func generateUserCode() (string, error) {
-	maxAttempts := 100 // Prevent infinite loops
+	maxAttempts := 100
 	charset := []rune(validation.ValidCharset)
 
+	// Continue attempting until we get a valid code
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		var codeBuilder strings.Builder
+		var code strings.Builder
 		freqs := make(map[rune]int)
-		success := true
 
 		// Generate first group of characters
-		for i := 0; i < validation.MinGroupSize; i++ {
-			// Find available characters
+		success := true
+		for i := 0; i < validation.MinGroupSize && success; i++ {
 			var available []rune
 			for _, c := range charset {
-				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+				if freqs[c] < 2 { // Limit character frequency per RFC 8628
 					available = append(available, c)
 				}
 			}
@@ -72,23 +73,21 @@ func generateUserCode() (string, error) {
 				return "", fmt.Errorf("selecting random character: %w", err)
 			}
 
-			codeBuilder.WriteRune(char)
+			code.WriteRune(char)
 			freqs[char]++
 		}
 
 		if !success {
-			continue
+			continue // Try again if generation failed
 		}
 
-		// Add separator
-		codeBuilder.WriteRune('-')
+		code.WriteRune('-') // Add separator
 
 		// Generate second group of characters
-		for i := 0; i < validation.MinGroupSize; i++ {
-			// Find available characters
+		for i := 0; i < validation.MinGroupSize && success; i++ {
 			var available []rune
 			for _, c := range charset {
-				if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+				if freqs[c] < 2 { // Limit character frequency per RFC 8628
 					available = append(available, c)
 				}
 			}
@@ -103,22 +102,21 @@ func generateUserCode() (string, error) {
 				return "", fmt.Errorf("selecting random character: %w", err)
 			}
 
-			codeBuilder.WriteRune(char)
+			code.WriteRune(char)
 			freqs[char]++
 		}
 
 		if !success {
-			continue
+			continue // Try again if generation failed
 		}
 
-		// Validate the generated code before returning
-		code := codeBuilder.String()
-		if err := validation.ValidateUserCode(code); err != nil {
+		// Validate generated code against all RFC 8628 section 6.1 requirements
+		result := code.String()
+		if err := validation.ValidateUserCode(result); err != nil {
 			continue // Try again if validation fails
 		}
 
-		// RFC 8628 Section 6.1 validation all passed
-		return code, nil
+		return result, nil
 	}
 
 	return "", fmt.Errorf("failed to generate valid code after %d attempts", maxAttempts)

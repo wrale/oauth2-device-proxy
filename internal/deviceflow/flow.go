@@ -11,6 +11,17 @@ import (
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
 
+const (
+	// MinExpiryDuration defines the minimum expiry duration per RFC 8628 section 6.1
+	MinExpiryDuration = 10 * time.Minute // 10 minutes
+
+	// MinPollInterval is the minimum interval between polling requests
+	MinPollInterval = 5 * time.Second // 5 seconds
+
+	// DefaultUserCodeLen is the default length for user codes
+	DefaultUserCodeLen = 8 // Per RFC 8628 section 6.1
+)
+
 // Flow manages the device authorization flow
 type Flow struct {
 	store           Store
@@ -22,61 +33,66 @@ type Flow struct {
 	maxPollsPerMin  int
 }
 
-// NewFlow creates a new device flow manager
+// NewFlow creates a new device flow manager with provided options
 func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 	f := newDefaultFlow(store, baseURL)
 	for _, opt := range opts {
 		opt(f)
 	}
+
+	// Ensure minimum durations per RFC 8628
+	if f.expiryDuration < MinExpiryDuration {
+		f.expiryDuration = MinExpiryDuration
+	}
+	if f.pollInterval < MinPollInterval {
+		f.pollInterval = MinPollInterval
+	}
+
 	return f
 }
 
 // buildVerificationURIs creates the verification URIs per RFC 8628 sections 3.2 and 3.3.1
 func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
-	// Normalize base URL and build verification URI
-	verificationURI := strings.TrimSuffix(f.baseURL, "/") + "/device"
+	// Ensure base URL ends with no trailing slash
+	baseURL := strings.TrimSuffix(f.baseURL, "/")
+	verificationURI := baseURL + "/device"
 
-	// Build complete URI with validated user code
+	// Validate user code before including in complete URI
 	if err := validation.ValidateUserCode(userCode); err != nil {
-		// If code invalid, return base URI without complete URI
-		return verificationURI, verificationURI
+		return verificationURI, ""
 	}
 
-	// Safely encode the user code
+	// Create verification URI with code as per RFC 8628 section 3.3.1
 	query := url.Values{}
-	query.Set("code", userCode)
+	query.Set("code", strings.TrimSpace(userCode))
 
 	return verificationURI, verificationURI + "?" + query.Encode()
 }
 
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
-	// Calculate expiry time per RFC 8628 section 3.2
-	// Duration must provide sufficient time for user interaction
-	// Minimum duration is 10 minutes per section 6.1
+	// Per RFC 8628 section 3.2, duration must provide sufficient time for user interaction
 	expiresIn := int(f.expiryDuration.Seconds())
-	minDuration := 600 // 10 minutes in seconds
-	if expiresIn < minDuration {
-		expiresIn = minDuration
+	if expiresIn < int(MinExpiryDuration.Seconds()) {
+		expiresIn = int(MinExpiryDuration.Seconds())
 	}
 
-	// Set absolute expiry time based on calculated duration
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
-	// Generate device code
+	// Generate the device code
 	deviceCode, err := generateSecureCode(32)
 	if err != nil {
 		return nil, fmt.Errorf("generating device code: %w", err)
 	}
 
-	// Generate user code with RFC 8628 section 6.1 compliant character set
+	// Generate the user code per RFC 8628 section 6.1
 	userCode, err := generateUserCode()
 	if err != nil {
 		return nil, fmt.Errorf("generating user code: %w", err)
 	}
 
-	// Build verification URIs
+	// Build verification URIs per RFC 8628 section 3.2
 	verificationURI, verificationURIComplete := f.buildVerificationURIs(userCode)
 
 	code := &DeviceCode{
@@ -92,6 +108,7 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		LastPoll:                now,
 	}
 
+	// Store the device code state
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("saving device code: %w", err)
 	}
@@ -122,8 +139,14 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 
 // VerifyUserCode verifies a user code and marks it as authorized
 func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// Get the device code first
-	code, err := f.store.GetDeviceCodeByUserCode(ctx, validation.NormalizeCode(userCode))
+	// Normalize and validate the user code
+	normalizedCode := validation.NormalizeCode(userCode)
+	if err := validation.ValidateUserCode(normalizedCode); err != nil {
+		return nil, ErrInvalidUserCode
+	}
+
+	// Get the device code
+	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalizedCode)
 	if err != nil {
 		return nil, fmt.Errorf("getting device code: %w", err)
 	}
@@ -162,19 +185,19 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 		return nil, ErrInvalidDeviceCode
 	}
 
-	// Update ExpiresIn based on remaining time
+	// Check expiration
 	remaining := time.Until(code.ExpiresAt).Seconds()
 	if remaining <= 0 {
 		return nil, ErrExpiredCode
 	}
 	code.ExpiresIn = int(remaining)
 
-	// Check poll rate limiting
+	// Check poll rate limiting per RFC 8628 section 3.5
 	if !f.canPoll(code.LastPoll) {
 		return nil, ErrSlowDown
 	}
 
-	// Update last poll time and ExpiresIn
+	// Update last poll time
 	code.LastPoll = time.Now()
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("updating last poll time: %w", err)
@@ -193,7 +216,7 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 	return token, nil
 }
 
-// CompleteAuthorization completes the authorization by saving the token
+// CompleteAuthorization completes the device authorization by saving the token
 func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	code, err := f.store.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
@@ -204,13 +227,14 @@ func (f *Flow) CompleteAuthorization(ctx context.Context, deviceCode string, tok
 		return ErrInvalidDeviceCode
 	}
 
-	// Update ExpiresIn based on remaining time
+	// Check expiration
 	remaining := time.Until(code.ExpiresAt).Seconds()
 	if remaining <= 0 {
 		return ErrExpiredCode
 	}
 	code.ExpiresIn = int(remaining)
 
+	// Save the token
 	if err := f.store.SaveToken(ctx, deviceCode, token); err != nil {
 		return fmt.Errorf("saving token: %w", err)
 	}
@@ -223,8 +247,7 @@ func (f *Flow) CheckHealth(ctx context.Context) error {
 	return f.store.CheckHealth(ctx)
 }
 
-// Helper functions
-
+// canPoll determines if polling is allowed based on the interval
 func (f *Flow) canPoll(lastPoll time.Time) bool {
 	return time.Since(lastPoll) >= f.pollInterval
 }
