@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 )
@@ -24,60 +23,59 @@ func generateUserCode() (string, error) {
 	maxAttempts := 100 // Prevent infinite loops
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// Generate each half of the code separately
+		// Create a string builder for each half
 		var parts [2]string
-		freqs := make(map[byte]int)
+		freqs := make(map[rune]int)
+		success := true
 
 		for half := 0; half < 2; half++ {
-			var chars []byte
+			chars := make([]byte, validation.MinGroupSize)
+
+			// Generate each character ensuring max frequency not exceeded
 			for i := 0; i < validation.MinGroupSize; i++ {
-				char, err := selectChar([]byte(validation.ValidCharset), freqs, 2)
-				if err != nil {
-					break // Invalid character distribution, try again
+				// Find available characters
+				var available []byte
+				for _, c := range validation.ValidCharset {
+					if freqs[c] < 2 { // Max 2 occurrences per RFC 8628 section 6.1
+						available = append(available, byte(c))
+					}
 				}
-				chars = append(chars, char)
+
+				if len(available) == 0 {
+					success = false
+					break
+				}
+
+				// Generate random index
+				b := make([]byte, 1)
+				if _, err := rand.Read(b); err != nil {
+					return "", fmt.Errorf("generating random byte: %w", err)
+				}
+				idx := int(b[0]) % len(available)
+
+				// Select and track character
+				chars[i] = available[idx]
+				freqs[rune(available[idx])]++
 			}
-			if len(chars) != validation.MinGroupSize {
-				continue // Retry if invalid length
+
+			if !success {
+				break
 			}
 			parts[half] = string(chars)
+		}
+
+		if !success {
+			continue // Try again if character distribution failed
 		}
 
 		// Join with hyphen
 		code := fmt.Sprintf("%s-%s", parts[0], parts[1])
 
-		// Validate final code meets all requirements
+		// Validate meets all RFC 8628 requirements
 		if err := validation.ValidateUserCode(code); err == nil {
 			return code, nil
 		}
 	}
 
 	return "", fmt.Errorf("failed to generate valid code after %d attempts", maxAttempts)
-}
-
-// selectChar chooses a random available character that hasn't exceeded maxAllowed frequency
-func selectChar(charset []byte, freqs map[byte]int, maxAllowed int) (byte, error) {
-	// Create list of available characters that haven't hit max frequency
-	available := make([]byte, 0, len(charset))
-	for _, c := range charset {
-		if freqs[c] < maxAllowed {
-			available = append(available, c)
-		}
-	}
-
-	if len(available) == 0 {
-		return 0, fmt.Errorf("no characters available under frequency limit %d", maxAllowed)
-	}
-
-	// Generate random index
-	randByte := make([]byte, 1)
-	if _, err := rand.Read(randByte); err != nil {
-		return 0, err
-	}
-
-	// Select and track character
-	selected := available[int(randByte[0])%len(available)]
-	freqs[selected]++
-
-	return selected, nil
 }
