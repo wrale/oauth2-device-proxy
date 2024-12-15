@@ -33,12 +33,14 @@ func NewFlow(store Store, baseURL string, opts ...Option) *Flow {
 // RequestDeviceCode initiates a new device authorization flow
 func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*DeviceCode, error) {
 	// Calculate expiry duration per RFC 8628 section 3.2
+	// Ensure duration is at least 10x the length of the user code
 	expiresIn := int(f.expiryDuration.Seconds())
-	minDuration := f.userCodeLength * 2 // Minimum duration in seconds
+	minDuration := f.userCodeLength * 10 // RFC 8628 recommends at least 10 minutes
 	if expiresIn < minDuration {
 		expiresIn = minDuration
 	}
 
+	// Set ExpiresAt based on expiresIn value
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
 
