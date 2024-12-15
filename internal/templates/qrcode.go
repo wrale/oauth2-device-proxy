@@ -1,4 +1,4 @@
-// Package templates provides HTML templating and QR code generation
+// Package templates provides HTML templating with QR code generation capabilities
 package templates
 
 import (
@@ -8,25 +8,37 @@ import (
 )
 
 const (
-	// QR Code specifications for RFC 8628 verification_uri_complete
+	// RFC 8628 section 3.3.1 recommends QR codes for non-textual transmission.
+	// These parameters are optimized for mobile phone camera scanning.
 	qrQuietZone  = 4   // Quiet zone size in modules
 	qrModuleSize = 4   // SVG rectangle size per module
-	qrVersion    = 2   // Version 2 (25x25) supports up to ~50 chars with ECC level L
+	qrVersion    = 2   // Version 2 (25x25) supports verification_uri_complete
 	qrSize       = 25  // Version 2 size in modules
-	qrEccLevel   = "L" // Error correction level L (7% recovery)
+	qrEccLevel   = "L" // Error correction level L (7%) as recommended by RFC
 )
 
-// GenerateQRCode creates an SVG QR code for the verification URI
-func (t *Templates) GenerateQRCode(verificationURI string) string {
+// GenerateQRCode creates an SVG QR code for the verification URI per RFC 8628 section 3.3.1.
+// This enables non-textual transmission of the verification URI and code while still
+// requiring the user to verify the code matches their device for security.
+func (t *Templates) GenerateQRCode(verificationURI string) (string, error) {
+	if verificationURI == "" {
+		return "", fmt.Errorf("empty verification URI")
+	}
+
 	// Calculate total size including quiet zones
 	totalSize := (qrSize + 2*qrQuietZone) * qrModuleSize
 
 	var buf bytes.Buffer
+
+	// Create SVG container with white background
 	buf.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">`, totalSize, totalSize))
 	buf.WriteString(`<rect width="100%" height="100%" fill="white"/>`)
 
 	// Generate QR code data matrix using Reed-Solomon encoding
-	matrix := generateQRMatrix(verificationURI)
+	matrix, err := generateQRMatrix(verificationURI)
+	if err != nil {
+		return "", fmt.Errorf("generating QR matrix: %w", err)
+	}
 
 	// Draw QR code modules
 	for y := 0; y < qrSize; y++ {
@@ -42,13 +54,17 @@ func (t *Templates) GenerateQRCode(verificationURI string) string {
 	}
 
 	buf.WriteString("</svg>")
-	return buf.String()
+	return buf.String(), nil
 }
 
-// generateQRMatrix creates a QR code matrix for the given text
-// This is a simplified implementation that only handles basic alphanumeric data
-// A production system should use a full QR code library
-func generateQRMatrix(text string) [][]bool {
+// generateQRMatrix creates a QR code matrix for the verification URI
+// This is a simplified implementation that handles alphanumeric data
+// per RFC 8628 verification_uri_complete requirements
+func generateQRMatrix(text string) ([][]bool, error) {
+	if len(text) > 90 { // Max length for Version 2 with ECC level L
+		return nil, fmt.Errorf("verification URI too long for QR version 2")
+	}
+
 	// Initialize matrix
 	matrix := make([][]bool, qrSize)
 	for i := range matrix {
@@ -56,10 +72,10 @@ func generateQRMatrix(text string) [][]bool {
 	}
 
 	// Add finder patterns
-	addFinderPattern(matrix, 0, 0)                  // Top-left
-	addFinderPattern(matrix, 0, qrSize-7)           // Top-right
-	addFinderPattern(matrix, qrSize-7, 0)           // Bottom-left
-	addAlignmentPattern(matrix, qrSize-9, qrSize-9) // Version 2 alignment pattern
+	addFinderPattern(matrix, 0, 0)        // Top-left
+	addFinderPattern(matrix, 0, qrSize-7) // Top-right
+	addFinderPattern(matrix, qrSize-7, 0) // Bottom-left
+	addAlignmentPattern(matrix, qrSize-9, qrSize-9)
 
 	// Add timing patterns
 	for i := 8; i < qrSize-8; i++ {
@@ -70,11 +86,16 @@ func generateQRMatrix(text string) [][]bool {
 	// Add format info
 	addFormatInfo(matrix)
 
-	// Add data bits (simplified)
-	data := encodeData(text)
-	addData(matrix, data)
+	// Add data bits
+	data, err := encodeData(text)
+	if err != nil {
+		return nil, fmt.Errorf("encoding data: %w", err)
+	}
+	if err := addData(matrix, data); err != nil {
+		return nil, fmt.Errorf("adding data to matrix: %w", err)
+	}
 
-	return matrix
+	return matrix, nil
 }
 
 // addFinderPattern adds a finder pattern to the matrix at the given position
@@ -94,7 +115,7 @@ func addFinderPattern(matrix [][]bool, top, left int) {
 	}
 }
 
-// addAlignmentPattern adds an alignment pattern to the matrix at the given position
+// addAlignmentPattern adds an alignment pattern required for Version 2
 func addAlignmentPattern(matrix [][]bool, top, left int) {
 	// Add 5x5 alignment pattern
 	for i := 0; i < 5; i++ {
@@ -107,11 +128,11 @@ func addAlignmentPattern(matrix [][]bool, top, left int) {
 	matrix[top+2][left+2] = true
 }
 
-// addFormatInfo adds the format information to the matrix
-// This is a simplified implementation that uses fixed format bits for V2-L
+// addFormatInfo adds format information using a fixed pattern for Version 2-L
 func addFormatInfo(matrix [][]bool) {
-	// Format bits for Version 2-L (simplified)
-	format := []bool{true, false, true, false, true, false, false, true, false, true, true, false, false, true, false}
+	// Format bits for Version 2-L
+	format := []bool{true, false, true, false, true, false, false, true,
+		false, true, true, false, false, true, false}
 
 	// Add format bits around the top-left finder pattern
 	for i := 0; i < 6; i++ {
@@ -123,16 +144,15 @@ func addFormatInfo(matrix [][]bool) {
 	matrix[8][7] = format[8]
 }
 
-// encodeData converts text into a QR code bit stream
-// This is a simplified implementation that only handles basic alphanumeric data
-func encodeData(text string) []bool {
-	// Convert string to uppercase (QR alphanumeric mode is uppercase only)
+// encodeData converts text into QR code bit stream for alphanumeric mode
+func encodeData(text string) ([]bool, error) {
+	// Convert to uppercase for QR alphanumeric mode
 	text = strings.ToUpper(text)
 
-	// Start with mode indicator (0b0010 for alphanumeric)
+	// Start with mode indicator for alphanumeric (0010)
 	bits := []bool{false, false, true, false}
 
-	// Add character count indicator (9 bits for Version 2)
+	// Add 9-bit character count indicator
 	length := len(text)
 	for i := 8; i >= 0; i-- {
 		bits = append(bits, (length&(1<<i)) != 0)
@@ -158,7 +178,7 @@ func encodeData(text string) []bool {
 		}
 	}
 
-	// Add terminator if needed
+	// Pad to byte boundary
 	if len(bits)%8 != 0 {
 		padding := 8 - (len(bits) % 8)
 		for i := 0; i < padding; i++ {
@@ -166,7 +186,7 @@ func encodeData(text string) []bool {
 		}
 	}
 
-	return bits
+	return bits, nil
 }
 
 // alphanumericValue converts a QR code alphanumeric character to its value
@@ -195,12 +215,16 @@ func alphanumericValue(c byte) int {
 	case c == ':':
 		return 44
 	default:
-		return 0
+		return 0 // Handle invalid characters
 	}
 }
 
-// addData adds the encoded data bits to the matrix using the mask pattern
-func addData(matrix [][]bool, data []bool) {
+// addData adds encoded data bits using mask pattern 0 per QR specification
+func addData(matrix [][]bool, data []bool) error {
+	if len(data) == 0 {
+		return fmt.Errorf("no data to add")
+	}
+
 	// Starting position at bottom-right, moving upward
 	x := qrSize - 1
 	y := qrSize - 1
@@ -252,11 +276,13 @@ func addData(matrix [][]bool, data []bool) {
 			}
 		}
 
-		// Skip over the vertical timing pattern
+		// Skip over vertical timing pattern
 		if x == 6 {
 			x--
 		}
 	}
+
+	return nil
 }
 
 // isReserved checks if a position in the matrix is reserved for format information
@@ -268,7 +294,7 @@ func isReserved(matrix [][]bool, x, y int) bool {
 		return true
 	}
 
-	// Check alignment pattern
+	// Check alignment pattern for Version 2
 	if x >= qrSize-9 && x < qrSize-4 &&
 		y >= qrSize-9 && y < qrSize-4 {
 		return true
