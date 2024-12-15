@@ -100,12 +100,11 @@ $(BINARY_OUTPUT_DIR):
 $(TEST_OUTPUT_DIR):
 	mkdir -p $(TEST_OUTPUT_DIR)
 
-clean: test-clean ## Clean build artifacts and containers
+clean: test-clean integration-clean ## Clean build artifacts and containers
 	$(GOCLEAN)
 	rm -rf $(BINARY_OUTPUT_DIR)
 	rm -rf $(TEST_OUTPUT_DIR)
 	rm -f $(COVERAGE_FILE)
-	$(COMPOSE_ENGINE) -f $(COMPOSE_FILE) down --volumes --remove-orphans
 
 deps: ## Install and verify dependencies
 	@echo "==> Verifying dependencies"
@@ -153,34 +152,48 @@ install-tools: ## Install development tools
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-all: deps fmt vet lint sec-check test build ## Run full verification and build
-
 integration-deps: ## Start integration test dependencies
 	@echo "==> Starting integration test environment"
 	$(COMPOSE_ENGINE) up -d
 	@echo "Waiting for services to be ready..."
-	@for i in $$(seq 1 60); do \
-		if curl -s http://localhost:8080/health >/dev/null && \
-		   curl -s http://localhost:8081/health/ready >/dev/null; then \
+	@for i in $$(seq 1 120); do \
+		KC_READY=false; \
+		if curl -s http://localhost:8081/health/ready >/dev/null 2>&1; then \
+			KC_READY=true; \
+		fi; \
+		if [ "$$KC_READY" = "true" ] && \
+		   curl -s http://localhost:8080/health >/dev/null 2>&1; then \
 			echo "All services ready"; \
 			break; \
 		fi; \
-		if [ $$i -eq 60 ]; then \
+		if [ $$i -eq 120 ]; then \
 			echo "Timeout waiting for services"; \
+			$(MAKE) integration-clean; \
 			exit 1; \
 		fi; \
-		echo "Waiting for services... $$i/60"; \
-		sleep 1; \
+		if [ "$$KC_READY" = "true" ]; then \
+			echo "Keycloak ready, waiting for proxy..."; \
+		else \
+			echo "Waiting for Keycloak... $$i/120"; \
+		fi; \
+		sleep 5; \
 	done
 
 integration-clean: ## Clean up integration test environment
 	@echo "==> Cleaning integration test environment"
 	$(COMPOSE_ENGINE) down -v --remove-orphans
 
-integration-test: build integration-deps ## Run integration tests
+integration-test: build ## Run integration tests
 	@echo "==> Running integration tests..."
+	$(MAKE) integration-deps
 	$(GOTEST) -v -count=1 -timeout=$(INTEGRATION_TIMEOUT) ./test/integration/...
 	$(MAKE) integration-clean
+
+# The main verification target that includes all checks and tests
+verify: deps fmt vet lint sec-check test integration-test ## Run all verifications
+
+# The main build target that ensures verification before building
+all: verify build ## Run full verification and build
 
 run: build redis-start ## Run proxy with Redis
 	@echo "==> Running OAuth2 Device Proxy"
