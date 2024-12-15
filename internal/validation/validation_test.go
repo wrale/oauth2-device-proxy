@@ -32,13 +32,13 @@ func TestValidateUserCode(t *testing.T) {
 			name:    "too short",
 			code:    "BCD-KLM",
 			wantErr: true,
-			errMsg:  "length must be exactly 8 characters",
+			errMsg:  "code must be exactly 8 characters",
 		},
 		{
 			name:    "too long",
 			code:    "BCDHJK-LMNPQR",
 			wantErr: true,
-			errMsg:  "length must be exactly 8 characters",
+			errMsg:  "code must be exactly 8 characters",
 		},
 		{
 			name:    "missing separator",
@@ -56,19 +56,19 @@ func TestValidateUserCode(t *testing.T) {
 			name:    "low entropy - repeating pairs",
 			code:    "BBBB-CCCC",
 			wantErr: true,
-			errMsg:  "entropy", // Primary validation failure is entropy
+			errMsg:  "insufficient entropy",
 		},
 		{
 			name:    "low entropy - alternating pattern",
 			code:    "BCBC-BCBC",
 			wantErr: true,
-			errMsg:  "entropy",
+			errMsg:  "insufficient entropy",
 		},
 		{
 			name:    "repeated chars with sufficient entropy",
-			code:    "BBBK-LMNN", // Good entropy but too many B's
+			code:    "BBBK-LMNN",
 			wantErr: true,
-			errMsg:  "too many repeated characters",
+			errMsg:  "character B cannot appear more than 2 times",
 		},
 		{
 			name:    "with whitespace",
