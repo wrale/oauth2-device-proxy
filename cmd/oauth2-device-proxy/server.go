@@ -74,11 +74,10 @@ func (s *server) routes() {
 		r.Post("/code", s.handleDeviceCode())   // Device code request
 		r.Post("/token", s.handleDeviceToken()) // Token polling
 
-		// User verification endpoints (RFC 8628 section 3.3)
-		r.Route("/verify", func(v chi.Router) {
-			v.Get("/", s.handleVerifyForm())    // Show verification form
-			v.Post("/", s.handleVerifySubmit()) // Process verification
-		})
+		// User verification handling (RFC 8628 section 3.3)
+		// Handles both GET (for form display) and POST (for code verification)
+		r.Get("/", s.handleVerifyForm())    // Show verification form
+		r.Post("/", s.handleVerifySubmit()) // Process verification
 
 		// OAuth callback handling
 		r.Get("/complete", s.handleDeviceComplete())
@@ -108,11 +107,27 @@ func (s *server) handleVerifyForm() http.HandlerFunc {
 		// Get prefilled code from query string
 		code := r.URL.Query().Get("code")
 
+		// Generate QR code if verification_uri_complete is supported
+		verificationURI := s.cfg.BaseURL + "/device"
+		qrCode := ""
+		if code != "" {
+			uri := verificationURI + "?code=" + url.QueryEscape(code)
+			qrCode, err = s.templates.GenerateQRCode(uri)
+			if err != nil {
+				// QR code generation failure is non-fatal
+				s.templates.RenderError(w, templates.ErrorData{
+					Title:   "QR Code Generation Failed",
+					Message: "The QR code could not be generated, but you can still enter the code manually.",
+				})
+			}
+		}
+
 		// Render verification form
 		data := templates.VerifyData{
-			PrefilledCode:   code,
-			CSRFToken:       token,
-			VerificationURI: s.cfg.BaseURL + "/device/verify",
+			PrefilledCode:         code,
+			CSRFToken:             token,
+			VerificationURI:       verificationURI,
+			VerificationQRCodeSVG: qrCode,
 		}
 
 		if err := s.templates.RenderVerify(w, data); err != nil {
@@ -124,6 +139,11 @@ func (s *server) handleVerifyForm() http.HandlerFunc {
 // handleVerifySubmit processes the verification form submission
 func (s *server) handleVerifySubmit() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
 		// Verify CSRF token
 		if err := s.csrf.ValidateToken(r.Context(), r.PostFormValue("csrf_token")); err != nil {
 			if err := s.templates.RenderError(w, templates.ErrorData{
