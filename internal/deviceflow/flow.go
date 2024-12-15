@@ -1,3 +1,4 @@
+// Package deviceflow implements OAuth 2.0 Device Authorization Grant (RFC 8628)
 package deviceflow
 
 import (
@@ -6,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -20,16 +22,17 @@ var (
 	ErrRateLimitExceeded    = errors.New("verification attempts exceeded, per RFC 8628 section 5.2")
 )
 
-// DeviceCode represents the device authorization details
+// DeviceCode represents the device authorization details per RFC 8628 section 3.2
 type DeviceCode struct {
-	DeviceCode      string    `json:"device_code"`
-	UserCode        string    `json:"user_code"`
-	VerificationURI string    `json:"verification_uri"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	Interval        int       `json:"interval"`
-	ClientID        string    `json:"client_id"`
-	Scope           string    `json:"scope,omitempty"`
-	LastPoll        time.Time `json:"last_poll"`
+	DeviceCode              string    `json:"device_code"`
+	UserCode                string    `json:"user_code"`
+	VerificationURI         string    `json:"verification_uri"`
+	VerificationURIComplete string    `json:"verification_uri_complete,omitempty"`
+	ExpiresAt               time.Time `json:"expires_at"`
+	Interval                int       `json:"interval"`
+	ClientID                string    `json:"client_id"`
+	Scope                   string    `json:"scope,omitempty"`
+	LastPoll                time.Time `json:"last_poll"`
 }
 
 // TokenResponse represents the OAuth2 token response
@@ -115,15 +118,22 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 		return nil, fmt.Errorf("generating user code: %w", err)
 	}
 
+	verificationURI := f.baseURL + "/device"
+
+	// Construct complete verification URI per RFC 8628 section 3.3.1
+	values := url.Values{"code": {userCode}}
+	verificationURIComplete := verificationURI + "?" + values.Encode()
+
 	code := &DeviceCode{
-		DeviceCode:      deviceCode,
-		UserCode:        userCode,
-		VerificationURI: f.baseURL + "/device",
-		ExpiresAt:       time.Now().Add(f.expiryDuration),
-		Interval:        int(f.pollInterval.Seconds()),
-		ClientID:        clientID,
-		Scope:           scope,
-		LastPoll:        time.Now(),
+		DeviceCode:              deviceCode,
+		UserCode:                userCode,
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: verificationURIComplete,
+		ExpiresAt:               time.Now().Add(f.expiryDuration),
+		Interval:                int(f.pollInterval.Seconds()),
+		ClientID:                clientID,
+		Scope:                   scope,
+		LastPoll:                time.Now(),
 	}
 
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
@@ -242,7 +252,7 @@ func generateSecureCode(length int) (string, error) {
 }
 
 func generateUserCode(length int) (string, error) {
-	const charset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters
+	const charset = "BCDFGHJKLMNPQRSTVWXZ" // Excludes vowels and similar-looking characters per RFC 8628 section 6.1
 
 	if length < 4 || length%2 != 0 {
 		return "", errors.New("invalid user code length")
