@@ -1,3 +1,4 @@
+// Package deviceflow implements OAuth 2.0 Device Authorization Grant (RFC 8628)
 package deviceflow
 
 import (
@@ -25,6 +26,7 @@ type Store interface {
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
 
 	// CheckDeviceCodeAttempts checks rate limiting for device code verification
+	// Returns (true, nil) if the attempt is allowed, or (false, error) if rate limited
 	CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error)
 
 	// CheckHealth verifies the storage backend is healthy
