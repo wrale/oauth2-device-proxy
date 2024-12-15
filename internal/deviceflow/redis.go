@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 	"github.com/redis/go-redis/v9"
 )
 

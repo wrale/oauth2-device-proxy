@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 // ErrStoreUnhealthy indicates the store is not available

@@ -1,4 +1,4 @@
-module github.com/jmdots/oauth2-device-proxy
+module github.com/wrale/oauth2-device-proxy
 
 go 1.21
 

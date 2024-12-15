@@ -13,8 +13,8 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/csrf"
-	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
+	"github.com/wrale/oauth2-device-proxy/internal/csrf"
+	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
 
 // Version is set by the build process

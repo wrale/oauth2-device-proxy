@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 // VerifyUserCode verifies a user code and checks rate limiting.

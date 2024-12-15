@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 // TestVerifyUserCode tests the user code verification per RFC 8628 sections 3.3 and 5.2
@@ -121,7 +123,7 @@ func TestVerifyUserCode(t *testing.T) {
 					t.Fatal("expected non-nil DeviceCode")
 				}
 
-				// Additional checks for valid codes
+				// Additional checks for valid codes per RFC 8628
 				if tt.userCode != code.UserCode {
 					normalized := validation.NormalizeCode(tt.userCode)
 					storedNormalized := validation.NormalizeCode(code.UserCode)

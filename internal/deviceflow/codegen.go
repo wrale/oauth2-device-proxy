@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 // generateSecureCode generates a cryptographically secure device code per RFC 8628 section 3.2.

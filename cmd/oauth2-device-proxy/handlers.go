@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
-	"github.com/jmdots/oauth2-device-proxy/internal/templates"
+	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
+	"github.com/wrale/oauth2-device-proxy/internal/templates"
 )
 
 // Health check handler

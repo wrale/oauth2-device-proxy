@@ -11,9 +11,9 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/oauth2"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/csrf"
-	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
-	"github.com/jmdots/oauth2-device-proxy/internal/templates"
+	"github.com/wrale/oauth2-device-proxy/internal/csrf"
+	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
+	"github.com/wrale/oauth2-device-proxy/internal/templates"
 )
 
 type server struct {

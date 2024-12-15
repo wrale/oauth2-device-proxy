@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/jmdots/oauth2-device-proxy/internal/validation"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 // buildVerificationURIs creates the verification URIs per RFC 8628 sections 3.2 and 3.3.1
