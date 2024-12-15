@@ -17,16 +17,16 @@ func TestBuildVerificationURIs(t *testing.T) {
 		{
 			name:     "valid code with trailing slash",
 			baseURL:  "https://example.com/",
-			userCode: "ABCD-EFGH",
+			userCode: "WDJB-MJHT", // Valid code from RFC 8628 character set
 			wantBase: "https://example.com/device",
-			wantFull: "https://example.com/device?code=ABCD-EFGH",
+			wantFull: "https://example.com/device?code=WDJB-MJHT",
 		},
 		{
 			name:     "valid code without trailing slash",
 			baseURL:  "https://example.com",
-			userCode: "ABCD-EFGH",
+			userCode: "WDJB-MJHT",
 			wantBase: "https://example.com/device",
-			wantFull: "https://example.com/device?code=ABCD-EFGH",
+			wantFull: "https://example.com/device?code=WDJB-MJHT",
 		},
 		{
 			name:     "invalid code",
@@ -38,16 +38,16 @@ func TestBuildVerificationURIs(t *testing.T) {
 		{
 			name:     "code with special characters",
 			baseURL:  "https://example.com",
-			userCode: "AB&D-EF#H",
+			userCode: "WD#B-MJ&T", // Invalid chars
 			wantBase: "https://example.com/device",
 			wantFull: "", // Invalid code - no complete URI
 		},
 		{
 			name:     "baseURL with path",
 			baseURL:  "https://example.com/auth/flow",
-			userCode: "ABCD-EFGH",
+			userCode: "WDJB-MJHT",
 			wantBase: "https://example.com/auth/flow/device",
-			wantFull: "https://example.com/auth/flow/device?code=ABCD-EFGH",
+			wantFull: "https://example.com/auth/flow/device?code=WDJB-MJHT",
 		},
 	}
 

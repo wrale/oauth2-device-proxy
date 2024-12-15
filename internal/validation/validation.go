@@ -16,8 +16,12 @@ const (
 	MinEntropy   = 2.0 // Minimum required entropy bits per RFC 8628 section 6.1
 )
 
-// ValidCharset contains the RECOMMENDED characters (excluding similar-looking chars) from RFC 8628 section 6.1
-const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ" // RFC 8628: A-Z excluding vowels and similar characters
+// ValidCharset contains the character set from RFC 8628 section 6.1:
+// "restrict the character set to case-insensitive A-Z characters, with no digits.
+// These characters can typically be entered on a mobile keyboard without using
+// modifier keys. Further removing vowels to avoid randomly creating words results
+// in the base 20 character set 'BCDFGHJKLMNPQRSTVWXZ'."
+const ValidCharset = "BCDFGHJKLMNPQRSTVWXZ"
 
 var (
 	// Format validation regex - enforces exact format with valid charset
@@ -58,7 +62,8 @@ func ValidateUserCode(code string) error {
 		return &ValidationError{
 			Code: originalCode,
 			Message: fmt.Sprintf(
-				"code must be in format XXXX-XXXX using only allowed characters: %s (per RFC 8628)",
+				"code must be in format XXXX-XXXX using only allowed characters: %s (per RFC 8628 section 6.1). "+
+					"This charset optimizes mobile input and avoids word creation.",
 				ValidCharset,
 			),
 		}
