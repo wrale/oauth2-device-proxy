@@ -174,7 +174,7 @@ func testTokenFlow(t *testing.T, s *TestSuite, auth *deviceAuthResponse) {
 
 						// Verify increased interval is respected
 						time.Sleep(initInterval + 5*time.Second)
-						nextResp, nextBody := doTokenRequest(t, s, map[string]string{
+						_, nextBody := doTokenRequest(t, s, map[string]string{
 							"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
 							"device_code": auth.DeviceCode,
 							"client_id":   "test-client",
