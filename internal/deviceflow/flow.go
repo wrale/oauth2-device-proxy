@@ -4,7 +4,6 @@ package deviceflow
 import (
 	"context"
 	"fmt"
-	"path"
 	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/validation"

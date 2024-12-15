@@ -43,7 +43,7 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 		}
 
 		// Check for duplicate parameters per RFC 8628 section 3.1
-		for key, values := range r.Form {
+		for _, values := range r.Form {
 			if len(values) > 1 {
 				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
 				return
@@ -79,7 +79,7 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		}
 
 		// Check for duplicate parameters
-		for key, values := range r.Form {
+		for _, values := range r.Form {
 			if len(values) > 1 {
 				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once")
 				return
