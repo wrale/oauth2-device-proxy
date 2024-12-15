@@ -17,7 +17,7 @@ var (
 	ErrPendingAuthorization = errors.New("authorization pending")
 	ErrSlowDown             = errors.New("polling too frequently")
 	ErrExpiredCode          = errors.New("code expired")
-	ErrRateLimitExceeded    = errors.New("rate limit exceeded")
+	ErrRateLimitExceeded    = errors.New("verification attempts exceeded, per RFC 8628 section 5.2")
 )
 
 // DeviceCode represents the device authorization details
@@ -135,6 +135,7 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 
 // VerifyUserCode verifies a user code and marks it as authorized
 func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
+	// Get the device code first
 	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalizeCode(userCode))
 	if err != nil {
 		return nil, fmt.Errorf("getting device code: %w", err)
@@ -146,6 +147,15 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 
 	if time.Now().After(code.ExpiresAt) {
 		return nil, ErrExpiredCode
+	}
+
+	// Check rate limit for verification attempts per RFC 8628 section 5.2
+	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
+	if err != nil {
+		return nil, fmt.Errorf("checking rate limit: %w", err)
+	}
+	if !allowed {
+		return nil, ErrRateLimitExceeded
 	}
 
 	return code, nil

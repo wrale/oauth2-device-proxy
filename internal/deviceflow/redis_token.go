@@ -10,6 +10,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	devicePrefix    = "device:"
+	userPrefix      = "user:"
+	tokenPrefix     = "token:"
+	ratePrefix      = "rate:"
+	maxAttempts     = 50 // Maximum verification attempts per device code per RFC 8628
+	rateLimitWindow = 5  // Time window in minutes for rate limit tracking
+)
+
+// RedisStore implements the Store interface using Redis
+type RedisStore struct {
+	client *redis.Client
+}
+
+// NewRedisStore creates a new Redis-backed store
+func NewRedisStore(client *redis.Client) Store {
+	return &RedisStore{client: client}
+}
+
 // SaveToken stores an access token for a device code
 func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	// Get the device code first to check expiry
@@ -83,10 +102,46 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 	// Delete token if exists
 	pipe.Del(ctx, tokenPrefix+deviceCode)
 
+	// Delete rate limit key
+	pipe.Del(ctx, ratePrefix+deviceCode)
+
 	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("deleting device code: %w", err)
 	}
 
 	return nil
+}
+
+// CheckDeviceCodeAttempts increments and checks the rate limit for device code verification attempts
+// Returns true if the attempt is allowed, false if the rate limit is exceeded
+func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
+	key := ratePrefix + deviceCode
+	window := time.Duration(rateLimitWindow) * time.Minute
+
+	// Use pipeline to check and increment atomically
+	pipe := s.client.Pipeline()
+
+	// Get current count
+	getCmd := pipe.Get(ctx, key)
+
+	// Increment counter
+	incrCmd := pipe.Incr(ctx, key)
+
+	// Ensure expiry is set (in case of new key)
+	pipe.Expire(ctx, key, window)
+
+	// Execute pipeline
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return false, fmt.Errorf("checking rate limit: %w", err)
+	}
+
+	// Get the new count
+	count, err := incrCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, fmt.Errorf("getting rate limit count: %w", err)
+	}
+
+	// Allow the attempt if under the limit
+	return count <= maxAttempts, nil
 }
