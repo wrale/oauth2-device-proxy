@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wrale/oauth2-device-proxy/internal/validation"
 	"github.com/redis/go-redis/v9"
+	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
 
 const (

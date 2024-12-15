@@ -3,7 +3,7 @@ package deviceflow
 
 import (
 	"net/url"
-	"strings"
+	"path"
 
 	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
@@ -13,19 +13,26 @@ import (
 // - verification_uri: The base URI that users can visit to enter their code
 // - verification_uri_complete: Optional URI that includes the user code (e.g., for QR codes)
 func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
-	// Ensure base URL ends with no trailing slash
-	baseURL := strings.TrimSuffix(f.baseURL, "/")
-	verificationURI := baseURL + "/device"
+	// Parse the base URL to properly handle existing paths
+	baseURL, err := url.Parse(f.baseURL)
+	if err != nil {
+		return "", "" // Invalid base URL
+	}
 
-	// Only include code in complete URI if it's valid
+	// Combine existing path with device endpoint
+	baseURL.Path = path.Join(baseURL.Path, "device")
+	verificationURI := baseURL.String()
+
+	// Validate the user code
 	if err := validation.ValidateUserCode(userCode); err != nil {
 		return verificationURI, "" // Return base URI only if code invalid
 	}
 
 	// Create verification URI with code per RFC section 3.3.1
-	query := url.Values{}
-	query.Set("code", userCode) // Use display format
-	verificationURIComplete := verificationURI + "?" + query.Encode()
+	completeURL := *baseURL // Make a copy for the complete URI
+	q := completeURL.Query()
+	q.Set("code", userCode) // Use display format per RFC section 6.1
+	completeURL.RawQuery = q.Encode()
 
-	return verificationURI, verificationURIComplete
+	return verificationURI, completeURL.String()
 }
