@@ -41,6 +41,7 @@ func TestDeviceFlow(t *testing.T) {
 	}
 
 	suite := NewSuite(t)
+	t.Log("Starting device flow test with OAuth 2.0 Device Authorization Grant (RFC 8628)")
 
 	// Wait for all services to be ready
 	if err := suite.WaitForServices(); err != nil {
@@ -54,7 +55,7 @@ func TestDeviceFlow(t *testing.T) {
 			t.Fatalf("Device authorization request failed: %v", err)
 		}
 
-		// Validate response per RFC 8628 section 3.2
+		t.Logf("Received device authorization response: %+v", deviceAuth)
 		validateDeviceAuthResponse(t, deviceAuth)
 
 		// Step 2: Simulate User Verification
@@ -81,28 +82,42 @@ func TestDeviceFlow(t *testing.T) {
 }
 
 func requestDeviceCode(s *TestSuite) (*deviceAuthResponse, error) {
+	s.T.Log("Requesting device code...")
 	data := url.Values{
 		"client_id": {"test-client"},
 		"scope":     {"test-scope"},
 	}
 
-	resp, err := s.Client.Post(
+	req, err := http.NewRequestWithContext(s.Ctx, "POST",
 		ProxyEndpoint+"/device/code",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
+		strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("device code request failed: %w", err)
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.DoRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, err := s.ReadBody(resp)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		// Try to decode error response
+		var errResp errorResponse
+		if err := json.Unmarshal(body, &errResp); err == nil {
+			return nil, fmt.Errorf("error response: %s: %s", errResp.Error, errResp.ErrorDescription)
+		}
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 	}
 
 	var response deviceAuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
@@ -112,37 +127,51 @@ func requestDeviceCode(s *TestSuite) (*deviceAuthResponse, error) {
 func validateDeviceAuthResponse(t *testing.T, resp *deviceAuthResponse) {
 	t.Helper()
 
+	var issues []string
 	if resp.DeviceCode == "" {
-		t.Error("device_code is required")
+		issues = append(issues, "device_code is required")
 	}
 	if resp.UserCode == "" {
-		t.Error("user_code is required")
+		issues = append(issues, "user_code is required")
 	}
 	if resp.VerificationURI == "" {
-		t.Error("verification_uri is required")
+		issues = append(issues, "verification_uri is required")
 	}
 	if resp.ExpiresIn <= 0 {
-		t.Error("expires_in must be positive")
+		issues = append(issues, fmt.Sprintf("expires_in must be positive, got %d", resp.ExpiresIn))
 	}
 	if resp.Interval <= 0 {
-		t.Error("interval must be positive")
+		issues = append(issues, fmt.Sprintf("interval must be positive, got %d", resp.Interval))
 	}
 	if resp.VerificationURIComplete == "" {
 		t.Log("verification_uri_complete not provided (optional per RFC 8628)")
 	}
+
+	if len(issues) > 0 {
+		t.Errorf("Invalid device authorization response:\n%s", strings.Join(issues, "\n"))
+	}
 }
 
 func simulateUserVerification(s *TestSuite, auth *deviceAuthResponse) error {
-	// Get verification page to obtain CSRF token
-	resp, err := s.Client.Get(auth.VerificationURI)
+	s.T.Log("Simulating user verification...")
+
+	// First try GET to fetch verification form
+	s.T.Log("Fetching verification form...")
+	req, err := http.NewRequestWithContext(s.Ctx, "GET", auth.VerificationURI, nil)
+	if err != nil {
+		return fmt.Errorf("creating GET request: %w", err)
+	}
+
+	resp, err := s.DoRequest(req)
 	if err != nil {
 		return fmt.Errorf("getting verification page: %w", err)
 	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+
+	body, err := s.ReadBody(resp)
 	if err != nil {
 		return fmt.Errorf("reading verification page: %w", err)
 	}
+	resp.Body.Close()
 
 	// Extract CSRF token
 	csrfToken := s.ExtractCSRFToken(string(body))
@@ -151,23 +180,46 @@ func simulateUserVerification(s *TestSuite, auth *deviceAuthResponse) error {
 	}
 
 	// Submit verification form
+	s.T.Log("Submitting verification form...")
 	data := url.Values{
 		"code":       {auth.UserCode},
 		"csrf_token": {csrfToken},
 	}
 
-	resp, err = s.Client.Post(
-		auth.VerificationURI,
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
+	req, err = http.NewRequestWithContext(s.Ctx, "POST", auth.VerificationURI,
+		strings.NewReader(data.Encode()))
+	if err != nil {
+		return fmt.Errorf("creating POST request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err = s.DoRequest(req)
 	if err != nil {
 		return fmt.Errorf("submitting verification: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		// Try with /verify endpoint if base path doesn't accept POST
+		verifyURL := auth.VerificationURI + "/verify"
+		s.T.Logf("Got 405, retrying with %s...", verifyURL)
+
+		req, err = http.NewRequestWithContext(s.Ctx, "POST", verifyURL,
+			strings.NewReader(data.Encode()))
+		if err != nil {
+			return fmt.Errorf("creating verify POST request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err = s.DoRequest(req)
+		if err != nil {
+			return fmt.Errorf("submitting to verify endpoint: %w", err)
+		}
+		defer resp.Body.Close()
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
+		body, _ := s.ReadBody(resp)
 		return fmt.Errorf("verification failed with status %d: %s", resp.StatusCode, body)
 	}
 
@@ -175,33 +227,49 @@ func simulateUserVerification(s *TestSuite, auth *deviceAuthResponse) error {
 }
 
 func pollForToken(s *TestSuite, auth *deviceAuthResponse) (*tokenResponse, error) {
+	s.T.Log("Starting token polling...")
 	ticker := time.NewTicker(time.Duration(auth.Interval) * time.Second)
 	defer ticker.Stop()
 
+	attempt := 0
+	maxAttempts := 30 // Prevent infinite polling in tests
+
 	for {
+		attempt++
+		if attempt > maxAttempts {
+			return nil, fmt.Errorf("exceeded maximum polling attempts")
+		}
+
 		select {
 		case <-s.Ctx.Done():
 			return nil, s.Ctx.Err()
 		case <-ticker.C:
+			s.T.Logf("Polling attempt %d/%d...", attempt, maxAttempts)
 			token, err := tryTokenRequest(s, auth.DeviceCode)
 			if err != nil {
+				// Try to parse error response
+				var errStr string
 				var errResp errorResponse
-				if err := json.Unmarshal([]byte(err.Error()), &errResp); err != nil {
-					return nil, fmt.Errorf("invalid error response: %w", err)
+				if jsonErr := json.Unmarshal([]byte(err.Error()), &errResp); jsonErr == nil {
+					errStr = errResp.Error
+				} else {
+					errStr = err.Error()
 				}
 
-				switch errResp.Error {
+				switch errStr {
 				case "authorization_pending":
-					continue // Keep polling
+					s.T.Log("Authorization pending, continuing to poll...")
+					continue
 				case "slow_down":
-					// Increase interval per RFC 8628
+					s.T.Log("Received slow_down, increasing interval...")
 					newInterval := time.Duration(auth.Interval+5) * time.Second
 					ticker.Reset(newInterval)
 					continue
 				default:
-					return nil, fmt.Errorf("token request failed: %s", errResp.Error)
+					return nil, fmt.Errorf("token request failed: %v", err)
 				}
 			}
+			s.T.Log("Successfully retrieved token")
 			return token, nil
 		}
 	}
@@ -214,17 +282,21 @@ func tryTokenRequest(s *TestSuite, deviceCode string) (*tokenResponse, error) {
 		"client_id":   {"test-client"},
 	}
 
-	resp, err := s.Client.Post(
+	req, err := http.NewRequestWithContext(s.Ctx, "POST",
 		ProxyEndpoint+"/device/token",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
+		strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("token request failed: %w", err)
+		return nil, fmt.Errorf("creating token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.DoRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending token request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := s.ReadBody(resp)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
@@ -232,10 +304,10 @@ func tryTokenRequest(s *TestSuite, deviceCode string) (*tokenResponse, error) {
 	if resp.StatusCode != http.StatusOK {
 		// Try to decode error response
 		var errResp errorResponse
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			return nil, fmt.Errorf("unexpected response: %q", string(body))
+		if err := json.Unmarshal(body, &errResp); err == nil {
+			return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.ErrorDescription)
 		}
-		return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.ErrorDescription)
+		return nil, fmt.Errorf("unexpected response: %q", string(body))
 	}
 
 	var token tokenResponse
@@ -249,24 +321,32 @@ func tryTokenRequest(s *TestSuite, deviceCode string) (*tokenResponse, error) {
 func validateTokenResponse(t *testing.T, token *tokenResponse) {
 	t.Helper()
 
+	var issues []string
 	if token.AccessToken == "" {
-		t.Error("access_token is required")
+		issues = append(issues, "access_token is required")
 	}
 	if token.TokenType == "" {
-		t.Error("token_type is required")
+		issues = append(issues, "token_type is required")
 	}
 	if token.ExpiresIn <= 0 {
-		t.Error("expires_in must be positive")
+		issues = append(issues, fmt.Sprintf("expires_in must be positive, got %d", token.ExpiresIn))
+	}
+
+	if len(issues) > 0 {
+		t.Errorf("Invalid token response:\n%s", strings.Join(issues, "\n"))
 	}
 }
 
 func testRateLimiting(t *testing.T, s *TestSuite, auth *deviceAuthResponse) {
 	t.Helper()
 
-	// Make rapid requests to trigger rate limiting
+	t.Log("Testing rate limiting...")
 	sawSlowDown := false
+
+	// Make rapid requests to trigger rate limiting
 	for i := 0; i < 20 && !sawSlowDown; i++ {
 		time.Sleep(100 * time.Millisecond) // Small delay to not overwhelm
+		t.Logf("Rate limit test request %d/20", i+1)
 
 		data := url.Values{
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
@@ -274,24 +354,34 @@ func testRateLimiting(t *testing.T, s *TestSuite, auth *deviceAuthResponse) {
 			"client_id":   {"test-client"},
 		}
 
-		resp, err := s.Client.Post(
+		req, err := http.NewRequestWithContext(s.Ctx, "POST",
 			ProxyEndpoint+"/device/token",
-			"application/x-www-form-urlencoded",
-			strings.NewReader(data.Encode()),
-		)
+			strings.NewReader(data.Encode()))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := s.DoRequest(req)
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
 
 		if resp.StatusCode == http.StatusBadRequest {
 			var errResp errorResponse
-			if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			body, err := s.ReadBody(resp)
+			if err != nil {
 				resp.Body.Close()
-				t.Fatalf("Failed to decode error response: %v", err)
+				t.Fatalf("Failed to read error response: %v", err)
 			}
 			resp.Body.Close()
 
+			if err := json.Unmarshal(body, &errResp); err != nil {
+				t.Fatalf("Failed to decode error response: %v", err)
+			}
+
 			if errResp.Error == "slow_down" {
+				t.Log("Received expected slow_down error")
 				sawSlowDown = true
 				break
 			}

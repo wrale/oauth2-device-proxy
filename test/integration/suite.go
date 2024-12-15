@@ -1,9 +1,12 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +45,65 @@ func NewSuite(t *testing.T) *TestSuite {
 	}
 }
 
+// LogRequest dumps an HTTP request for debugging
+func (s *TestSuite) LogRequest(req *http.Request) error {
+	dump, err := httputil.DumpRequestOut(req, true)
+	if err != nil {
+		return fmt.Errorf("dumping request: %w", err)
+	}
+	s.T.Logf("\n=== REQUEST ===\n%s\n", dump)
+	return nil
+}
+
+// LogResponse dumps an HTTP response for debugging
+func (s *TestSuite) LogResponse(resp *http.Response) error {
+	dump, err := httputil.DumpResponse(resp, true)
+	if err != nil {
+		return fmt.Errorf("dumping response: %w", err)
+	}
+	s.T.Logf("\n=== RESPONSE ===\n%s\n", dump)
+	return nil
+}
+
+// DoRequest performs an HTTP request with logging
+func (s *TestSuite) DoRequest(req *http.Request) (*http.Response, error) {
+	if err := s.LogRequest(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.LogResponse(resp); err != nil {
+		resp.Body.Close()
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// ReadBody reads and logs response body while preserving it for reuse
+func (s *TestSuite) ReadBody(resp *http.Response) ([]byte, error) {
+	if resp.Body == nil {
+		return nil, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading body: %w", err)
+	}
+	resp.Body.Close()
+
+	// Log body content
+	s.T.Logf("\n=== BODY ===\n%s\n", body)
+
+	// Replace body for future reads
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
 // WaitForServices waits for all required services to be healthy
 func (s *TestSuite) WaitForServices() error {
 	services := []struct {
@@ -66,7 +128,7 @@ func (s *TestSuite) WaitForServices() error {
 				return fmt.Errorf("creating request for %s: %w", svc.name, err)
 			}
 
-			resp, err := s.Client.Do(req)
+			resp, err := s.DoRequest(req)
 			if err != nil {
 				allHealthy = false
 				lastErr = fmt.Errorf("checking %s health: %w", svc.name, err)
@@ -74,14 +136,10 @@ func (s *TestSuite) WaitForServices() error {
 			}
 
 			if err := func() error {
-				defer func() {
-					if closeErr := resp.Body.Close(); closeErr != nil {
-						s.T.Logf("Error closing response body for %s: %v", svc.name, closeErr)
-					}
-				}()
-
+				defer resp.Body.Close()
 				if resp.StatusCode != http.StatusOK {
-					return fmt.Errorf("%s returned status %d", svc.name, resp.StatusCode)
+					body, _ := s.ReadBody(resp)
+					return fmt.Errorf("%s returned status %d: %s", svc.name, resp.StatusCode, body)
 				}
 				return nil
 			}(); err != nil {
@@ -115,6 +173,7 @@ func (s *TestSuite) ExtractCSRFToken(html string) string {
 			return html[:i]
 		}
 	}
+	s.T.Log("CSRF token not found in HTML response")
 	return ""
 }
 

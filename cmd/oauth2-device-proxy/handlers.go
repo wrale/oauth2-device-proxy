@@ -69,15 +69,15 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 			UserCode                string `json:"user_code"`
 			VerificationURI         string `json:"verification_uri"`
 			VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
-			ExpiresIn              int    `json:"expires_in"`
-			Interval               int    `json:"interval"`
+			ExpiresIn               int    `json:"expires_in"`
+			Interval                int    `json:"interval"`
 		}{
 			DeviceCode:              code.DeviceCode,
 			UserCode:                code.UserCode,
 			VerificationURI:         code.VerificationURI,
 			VerificationURIComplete: code.VerificationURIComplete,
-			ExpiresIn:              expiresIn,
-			Interval:               code.Interval,
+			ExpiresIn:               expiresIn,
+			Interval:                code.Interval,
 		}
 
 		writeJSON(w, resp)
