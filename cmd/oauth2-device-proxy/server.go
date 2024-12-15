@@ -115,10 +115,12 @@ func (s *server) handleVerifyForm() http.HandlerFunc {
 			qrCode, err = s.templates.GenerateQRCode(uri)
 			if err != nil {
 				// QR code generation failure is non-fatal
-				s.templates.RenderError(w, templates.ErrorData{
+				if renderErr := s.templates.RenderError(w, templates.ErrorData{
 					Title:   "QR Code Generation Failed",
 					Message: "The QR code could not be generated, but you can still enter the code manually.",
-				})
+				}); renderErr != nil {
+					http.Error(w, "error rendering page", http.StatusInternalServerError)
+				}
 			}
 		}
 
