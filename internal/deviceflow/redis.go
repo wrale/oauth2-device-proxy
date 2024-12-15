@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmdots/oauth2-device-proxy/internal/validation"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -61,7 +62,7 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 	pipe.Set(ctx, deviceKey, data, ttl)
 
 	// Set user code reference
-	userKey := userPrefix + normalizeCode(code.UserCode)
+	userKey := userPrefix + validation.NormalizeCode(code.UserCode)
 	pipe.Set(ctx, userKey, code.DeviceCode, ttl)
 
 	// Initialize rate limit tracking
@@ -99,7 +100,7 @@ func (s *RedisStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Dev
 // GetDeviceCodeByUserCode retrieves a device code using the user code
 func (s *RedisStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
 	// Get device code from user code reference
-	deviceCode, err := s.client.Get(ctx, userPrefix+normalizeCode(userCode)).Result()
+	deviceCode, err := s.client.Get(ctx, userPrefix+validation.NormalizeCode(userCode)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
@@ -186,7 +187,7 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 
 	// Main keys
 	pipe.Del(ctx, devicePrefix+deviceCode)
-	pipe.Del(ctx, userPrefix+normalizeCode(code.UserCode))
+	pipe.Del(ctx, userPrefix+validation.NormalizeCode(code.UserCode))
 	pipe.Del(ctx, tokenPrefix+deviceCode)
 
 	// Rate limit keys
