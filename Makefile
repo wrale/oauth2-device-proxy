@@ -47,6 +47,7 @@ GOSEC=gosec
 # Test parameters
 TEST_OUTPUT_DIR=test-output
 COVERAGE_FILE=coverage.out
+INTEGRATION_TIMEOUT=5m
 
 # Docker/Podman context and compose files
 BUILD_CONTEXT=.
@@ -56,6 +57,7 @@ COMPOSE_DEV_FILE=docker-compose.dev.yml
 .PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build docker-build docker-push docker-run docker-stop compose-up compose-down
 .PHONY: build-image push-image x y z verify-deps test-deps test-clean redis-start redis-stop
+.PHONY: integration-test integration-deps integration-clean
 
 help: ## Display available commands
 	@echo "Available Commands:"
@@ -131,9 +133,9 @@ sec-check: ## Run security scan
 	@echo "==> Running security scan"
 	$(GOSEC) ./...
 
-test: test-deps ## Run tests
-	@echo "==> Running tests..."
-	$(GOTEST) -v -race ./...
+test: test-deps ## Run unit tests
+	@echo "==> Running unit tests..."
+	$(GOTEST) -v -short -race ./...
 	$(MAKE) test-clean
 
 coverage: test-deps ## Generate coverage report
@@ -152,6 +154,33 @@ install-tools: ## Install development tools
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 
 all: deps fmt vet lint sec-check test build ## Run full verification and build
+
+integration-deps: ## Start integration test dependencies
+	@echo "==> Starting integration test environment"
+	$(COMPOSE_ENGINE) up -d
+	@echo "Waiting for services to be ready..."
+	@for i in $$(seq 1 60); do \
+		if curl -s http://localhost:8080/health >/dev/null && \
+		   curl -s http://localhost:8081/health/ready >/dev/null; then \
+			echo "All services ready"; \
+			break; \
+		fi; \
+		if [ $$i -eq 60 ]; then \
+			echo "Timeout waiting for services"; \
+			exit 1; \
+		fi; \
+		echo "Waiting for services... $$i/60"; \
+		sleep 1; \
+	done
+
+integration-clean: ## Clean up integration test environment
+	@echo "==> Cleaning integration test environment"
+	$(COMPOSE_ENGINE) down -v --remove-orphans
+
+integration-test: build integration-deps ## Run integration tests
+	@echo "==> Running integration tests..."
+	$(GOTEST) -v -count=1 -timeout=$(INTEGRATION_TIMEOUT) ./test/integration/...
+	$(MAKE) integration-clean
 
 run: build redis-start ## Run proxy with Redis
 	@echo "==> Running OAuth2 Device Proxy"
