@@ -25,12 +25,11 @@ var (
 // DeviceCode represents the device authorization details per RFC 8628 section 3.2
 type DeviceCode struct {
 	// Required fields per RFC 8628 section 3.2
-	DeviceCode      string    `json:"device_code"`
-	UserCode        string    `json:"user_code"`
-	VerificationURI string    `json:"verification_uri"`
-	ExpiresAt       time.Time `json:"-"`          // Internal tracking
-	ExpiresIn       int       `json:"expires_in"` // RFC 8628 response field
-	Interval        int       `json:"interval"`
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"` // RFC 8628 response field
+	Interval        int    `json:"interval"`
 
 	// Optional verification_uri_complete field per RFC 8628 section 3.3.1
 	// Enables non-textual transmission of the verification URI (e.g., QR codes)
@@ -38,9 +37,10 @@ type DeviceCode struct {
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
 
 	// Additional fields for internal tracking
-	ClientID string    `json:"-"`
-	Scope    string    `json:"-"`
-	LastPoll time.Time `json:"-"`
+	ExpiresAt time.Time `json:"-"` // Internal tracking
+	ClientID  string    `json:"-"`
+	Scope     string    `json:"-"`
+	LastPoll  time.Time `json:"-"`
 }
 
 // TokenResponse represents the OAuth2 token response
@@ -139,13 +139,18 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 	expiresAt := time.Now().Add(f.expiryDuration)
 	expiresIn := int(f.expiryDuration.Seconds())
 
+	// Per RFC 8628 section 3.2: ensure minimum TTL is sufficient
+	if expiresIn <= f.userCodeLength*2 {
+		expiresIn = f.userCodeLength * 2
+	}
+
 	code := &DeviceCode{
 		DeviceCode:              deviceCode,
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: verificationURIComplete,
-		ExpiresAt:               expiresAt,
 		ExpiresIn:               expiresIn,
+		ExpiresAt:               expiresAt,
 		Interval:                int(f.pollInterval.Seconds()),
 		ClientID:                clientID,
 		Scope:                   scope,
@@ -175,10 +180,11 @@ func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCod
 	}
 
 	// Update ExpiresIn based on remaining time
-	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
-	if code.ExpiresIn <= 0 {
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	if remaining <= 0 {
 		return nil, ErrExpiredCode
 	}
+	code.ExpiresIn = int(remaining)
 
 	return code, nil
 }
@@ -209,10 +215,11 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 	}
 
 	// Update ExpiresIn based on remaining time
-	code.ExpiresIn = int(time.Until(code.ExpiresAt).Seconds())
-	if code.ExpiresIn <= 0 {
+	remaining := time.Until(code.ExpiresAt).Seconds()
+	if remaining <= 0 {
 		return nil, ErrExpiredCode
 	}
+	code.ExpiresIn = int(remaining)
 
 	return code, nil
 }
@@ -309,12 +316,19 @@ func generateUserCode(length int) (string, error) {
 		return "", err
 	}
 
-	code := make([]byte, length)
+	var code []byte
+	// Calculate output length with separator
+	totalLen := length + 1
+	// Pre-allocate output slice
+	code = make([]byte, 0, totalLen)
+
 	for i := 0; i < length; i++ {
-		code[i] = charset[int(bytes[i])%len(charset)]
+		// Add the separator after half the characters
 		if i == length/2 {
-			code = append(code[:i], append([]byte{'-'}, code[i:]...)...)
+			code = append(code, '-')
 		}
+		// Add the next random character
+		code = append(code, charset[int(bytes[i])%len(charset)])
 	}
 
 	return string(code), nil
