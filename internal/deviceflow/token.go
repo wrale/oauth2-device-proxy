@@ -14,7 +14,7 @@ func (f *Flow) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenRe
 	// Use GetDeviceCode for consistent validation
 	code, err := f.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validating device code: %w", err)
 	}
 
 	// Check rate limiting per RFC 8628 section 3.5
