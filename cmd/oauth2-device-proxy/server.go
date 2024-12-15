@@ -68,20 +68,17 @@ func (s *server) routes() {
 	// Health check endpoint
 	s.router.Get("/health", s.handleHealth())
 
-	// Device flow endpoints per RFC 8628 section 3.3-3.4
-	s.router.Route("/device", func(r chi.Router) {
-		// Device authorization endpoints (RFC 8628 section 3.2)
-		r.Post("/code", s.handleDeviceCode())   // Device code request
-		r.Post("/token", s.handleDeviceToken()) // Token polling
+	// Device authorization endpoints (RFC 8628 section 3.2)
+	s.router.Post("/device/code", s.handleDeviceCode())
+	s.router.Post("/device/token", s.handleDeviceToken())
 
-		// User verification handling (RFC 8628 section 3.3)
-		// Handles both GET (for form display) and POST (for code verification)
-		r.Get("/", s.handleVerifyForm())    // Show verification form
-		r.Post("/", s.handleVerifySubmit()) // Process verification
+	// User verification handling (RFC 8628 section 3.3)
+	// Handle both GET for form display and POST for verification
+	s.router.Get("/device", s.handleVerifyForm())
+	s.router.Post("/device", s.handleVerifySubmit())
 
-		// OAuth callback handling
-		r.Get("/complete", s.handleDeviceComplete())
-	})
+	// OAuth callback handling
+	s.router.Get("/device/complete", s.handleDeviceComplete())
 }
 
 // ServeHTTP implements http.Handler

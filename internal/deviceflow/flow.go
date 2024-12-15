@@ -28,7 +28,7 @@ type DeviceCode struct {
 	DeviceCode      string    `json:"device_code"`
 	UserCode        string    `json:"user_code"`
 	VerificationURI string    `json:"verification_uri"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	ExpiresAt       time.Time `json:"-"` // Use expires_in for client response
 	Interval        int       `json:"interval"`
 
 	// Optional verification_uri_complete field per RFC 8628 section 3.3.1
@@ -37,9 +37,9 @@ type DeviceCode struct {
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
 
 	// Additional fields for internal tracking
-	ClientID string    `json:"client_id"`
-	Scope    string    `json:"scope,omitempty"`
-	LastPoll time.Time `json:"last_poll"`
+	ClientID string    `json:"-"`
+	Scope    string    `json:"-"`
+	LastPoll time.Time `json:"-"`
 }
 
 // TokenResponse represents the OAuth2 token response
@@ -148,6 +148,24 @@ func (f *Flow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*
 
 	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("saving device code: %w", err)
+	}
+
+	return code, nil
+}
+
+// GetDeviceCode retrieves a device code by its device code string
+func (f *Flow) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error) {
+	code, err := f.store.GetDeviceCode(ctx, deviceCode)
+	if err != nil {
+		return nil, fmt.Errorf("getting device code: %w", err)
+	}
+
+	if code == nil {
+		return nil, ErrInvalidDeviceCode
+	}
+
+	if time.Now().After(code.ExpiresAt) {
+		return nil, ErrExpiredCode
 	}
 
 	return code, nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/jmdots/oauth2-device-proxy/internal/deviceflow"
 	"github.com/jmdots/oauth2-device-proxy/internal/templates"
@@ -37,13 +38,13 @@ func (s *server) handleHealth() http.HandlerFunc {
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
+			writeError(w, "invalid_request", "Invalid request format")
 			return
 		}
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			http.Error(w, "missing client_id", http.StatusBadRequest)
+			writeError(w, "invalid_request", "Missing client_id parameter")
 			return
 		}
 
@@ -51,11 +52,35 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 
 		code, err := s.flow.RequestDeviceCode(r.Context(), clientID, scope)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, "server_error", err.Error())
 			return
 		}
 
-		writeJSON(w, code)
+		// Per RFC 8628 section 3.2, convert ExpiresAt to ExpiresIn
+		expiresIn := int(time.Until(code.ExpiresAt).Seconds())
+		if expiresIn <= 0 {
+			writeError(w, "server_error", "Invalid expiry time")
+			return
+		}
+
+		// Prepare response per RFC 8628 section 3.2
+		resp := struct {
+			DeviceCode              string `json:"device_code"`
+			UserCode                string `json:"user_code"`
+			VerificationURI         string `json:"verification_uri"`
+			VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
+			ExpiresIn              int    `json:"expires_in"`
+			Interval               int    `json:"interval"`
+		}{
+			DeviceCode:              code.DeviceCode,
+			UserCode:                code.UserCode,
+			VerificationURI:         code.VerificationURI,
+			VerificationURIComplete: code.VerificationURIComplete,
+			ExpiresIn:              expiresIn,
+			Interval:               code.Interval,
+		}
+
+		writeJSON(w, resp)
 	}
 }
 
@@ -63,18 +88,18 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
+			writeError(w, "invalid_request", "Invalid request format")
 			return
 		}
 
 		if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
-			writeError(w, "unsupported_grant_type")
+			writeError(w, "unsupported_grant_type", "Only device code grant type is supported")
 			return
 		}
 
 		deviceCode := r.Form.Get("device_code")
 		if deviceCode == "" {
-			writeError(w, "invalid_request")
+			writeError(w, "invalid_request", "Missing device_code parameter")
 			return
 		}
 
@@ -82,15 +107,15 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		if err != nil {
 			switch {
 			case errors.Is(err, deviceflow.ErrInvalidDeviceCode):
-				writeError(w, "invalid_grant")
+				writeError(w, "invalid_grant", "Invalid device code")
 			case errors.Is(err, deviceflow.ErrExpiredCode):
-				writeError(w, "expired_token")
+				writeError(w, "expired_token", "Device code has expired")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
-				writeError(w, "authorization_pending")
+				writeError(w, "authorization_pending", "User has not yet completed authorization")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down")
+				writeError(w, "slow_down", "Polling too frequently")
 			default:
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				writeError(w, "server_error", err.Error())
 			}
 			return
 		}
@@ -125,7 +150,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 		}
 
 		// Load device code details to preserve scope
-		dCode, err := s.flow.VerifyUserCode(r.Context(), deviceCode)
+		dCode, err := s.flow.GetDeviceCode(r.Context(), deviceCode)
 		if err != nil {
 			if err := s.templates.RenderError(w, templates.ErrorData{
 				Title:   "Authorization Failed",
@@ -176,8 +201,16 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	}
 }
 
-func writeError(w http.ResponseWriter, code string) {
+// writeError sends an RFC 8628 compliant error response
+func writeError(w http.ResponseWriter, code string, description string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	writeJSON(w, map[string]string{"error": code})
+	resp := struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description,omitempty"`
+	}{
+		Error:            code,
+		ErrorDescription: description,
+	}
+	writeJSON(w, resp)
 }
