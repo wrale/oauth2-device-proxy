@@ -74,16 +74,94 @@ func (s *server) routes() {
 		r.Post("/code", s.handleDeviceCode())   // Device code request
 		r.Post("/token", s.handleDeviceToken()) // Token polling
 
-		// User verification page and form handling (RFC 8628 section 3.3)
-		r.Get("/", s.handleDeviceVerification())     // Show verification form
-		r.Post("/", s.handleDeviceVerification())    // Process verification form
-		r.Get("/complete", s.handleDeviceComplete()) // OAuth callback handling
+		// User verification endpoints (RFC 8628 section 3.3)
+		r.Route("/verify", func(v chi.Router) {
+			v.Get("/", s.handleVerifyForm())    // Show verification form
+			v.Post("/", s.handleVerifySubmit()) // Process verification
+		})
+
+		// OAuth callback handling
+		r.Get("/complete", s.handleDeviceComplete())
 	})
 }
 
 // ServeHTTP implements http.Handler
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+// handleVerifyForm shows the verification form
+func (s *server) handleVerifyForm() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Generate CSRF token
+		token, err := s.csrf.GenerateToken(r.Context())
+		if err != nil {
+			if err := s.templates.RenderError(w, templates.ErrorData{
+				Title:   "System Error",
+				Message: "Unable to process request. Please try again.",
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// Get prefilled code from query string
+		code := r.URL.Query().Get("code")
+
+		// Render verification form
+		data := templates.VerifyData{
+			PrefilledCode:   code,
+			CSRFToken:       token,
+			VerificationURI: s.cfg.BaseURL + "/device/verify",
+		}
+
+		if err := s.templates.RenderVerify(w, data); err != nil {
+			http.Error(w, "error rendering page", http.StatusInternalServerError)
+		}
+	}
+}
+
+// handleVerifySubmit processes the verification form submission
+func (s *server) handleVerifySubmit() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Verify CSRF token
+		if err := s.csrf.ValidateToken(r.Context(), r.PostFormValue("csrf_token")); err != nil {
+			if err := s.templates.RenderError(w, templates.ErrorData{
+				Title:   "Invalid Request",
+				Message: "Please try submitting the form again.",
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// Get and validate the user code
+		code := r.PostFormValue("code")
+		deviceCode, err := s.flow.VerifyUserCode(r.Context(), code)
+		if err != nil {
+			data := templates.VerifyData{
+				Error:     "Invalid or expired code. Please try again.",
+				CSRFToken: r.PostFormValue("csrf_token"),
+			}
+			if err := s.templates.RenderVerify(w, data); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// Code is valid - redirect to OAuth provider
+		params := map[string]string{
+			"response_type": "code",
+			"client_id":     deviceCode.ClientID,
+			"redirect_uri":  s.cfg.BaseURL + "/device/complete",
+			"state":         deviceCode.DeviceCode,
+		}
+		if deviceCode.Scope != "" {
+			params["scope"] = deviceCode.Scope
+		}
+
+		http.Redirect(w, r, s.buildOAuthURL(params), http.StatusFound)
+	}
 }
 
 // Helper methods
