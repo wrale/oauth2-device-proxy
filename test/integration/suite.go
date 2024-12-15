@@ -77,7 +77,10 @@ func (s *TestSuite) DoRequest(req *http.Request) (*http.Response, error) {
 	}
 
 	if err := s.LogResponse(resp); err != nil {
-		resp.Body.Close()
+		closeErr := resp.Body.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("failed to close response body after log error: %v (original error: %w)", closeErr, err)
+		}
 		return nil, err
 	}
 
@@ -94,7 +97,9 @@ func (s *TestSuite) ReadBody(resp *http.Response) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("closing response body: %w", err)
+	}
 
 	// Log body content
 	s.T.Logf("\n=== BODY ===\n%s\n", body)
@@ -136,7 +141,11 @@ func (s *TestSuite) WaitForServices() error {
 			}
 
 			if err := func() error {
-				defer resp.Body.Close()
+				defer func() {
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						s.T.Logf("Warning: failed to close response body: %v", closeErr)
+					}
+				}()
 				if resp.StatusCode != http.StatusOK {
 					body, _ := s.ReadBody(resp)
 					return fmt.Errorf("%s returned status %d: %s", svc.name, resp.StatusCode, body)
