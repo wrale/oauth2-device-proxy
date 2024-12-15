@@ -121,7 +121,7 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			return
 		}
 
-		// Check for duplicate parameters per RFC 8628
+		// Check for duplicate parameters per RFC 8628 section 3.4
 		for key, values := range r.Form {
 			if len(values) > 1 {
 				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4): "+key)
@@ -146,6 +146,12 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			return
 		}
 
+		clientID := r.Form.Get("client_id")
+		if clientID == "" {
+			writeError(w, "invalid_request", "The client_id parameter is REQUIRED for public clients (Section 3.4)")
+			return
+		}
+
 		token, err := s.flow.CheckDeviceCode(r.Context(), deviceCode)
 		if err != nil {
 			switch {
@@ -156,9 +162,9 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
 				writeError(w, "authorization_pending", "The authorization request is still pending (Section 3.5)")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down", "Please slow down polling by increasing your interval by 5 seconds (Section 3.5)")
+				writeError(w, "slow_down", "Polling interval MUST be increased by 5 seconds (Section 3.5)")
 			default:
-				writeError(w, "server_error", "An unexpected error occurred processing the request")
+				writeError(w, "server_error", "An unexpected error occurred processing the request (Section 3.5)")
 			}
 			return
 		}
@@ -246,20 +252,23 @@ func setJSONHeaders(w http.ResponseWriter) {
 
 // handleJSONError handles JSON encoding errors with a proper error response
 func handleJSONError(w http.ResponseWriter, err error) {
-	w.WriteHeader(http.StatusInternalServerError)
 	errResponse := struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}{
 		Error:            "server_error",
-		ErrorDescription: "Failed to encode response",
+		ErrorDescription: "Failed to encode response (Section 3.5)",
 	}
 	// Create error response manually as fallback
+	w.WriteHeader(http.StatusInternalServerError)
 	errorBytes, _ := json.Marshal(errResponse)
-	if _, err := w.Write(errorBytes); err != nil {
-		// At this point, we've exhausted our options for sending an error response
-		// Log the error if we have a logger, but continue since we can't recover
+	if _, writeErr := w.Write(errorBytes); writeErr != nil {
+		// This is a last-resort error handler. At this point, we've already
+		// failed to encode the JSON response and our fallback Write also failed.
+		// Since we can't write anything to the client, our only option is to
+		// fail silently and return, allowing the client to handle the timeout.
 		// TODO: Add logging once we have a logger configured
+		return
 	}
 }
 

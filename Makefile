@@ -232,5 +232,3 @@ r: ## Combine tree, make all, git log, and codestate outputs with separators
 		echo -e "\n=== Make All Output ==="; \
 		make all; \
 	} 2>&1 | $(COPY_TO_CLIPBOARD)
-		#echo -e "\n=== CodeState Output ==="; \
-		#codestate.py; \
