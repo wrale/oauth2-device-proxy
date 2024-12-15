@@ -68,17 +68,16 @@ func (s *server) routes() {
 	// Health check endpoint
 	s.router.Get("/health", s.handleHealth())
 
-	// Group all device flow endpoints under /device per RFC 8628 section 3.3-3.4
+	// Device flow endpoints per RFC 8628 section 3.3-3.4
 	s.router.Route("/device", func(r chi.Router) {
-		// Device authorization endpoints (RFC 8628 section 3.4)
+		// Device authorization endpoints (RFC 8628 section 3.2)
 		r.Post("/code", s.handleDeviceCode())   // Device code request
 		r.Post("/token", s.handleDeviceToken()) // Token polling
 
-		// User verification - Direct form handling (RFC 8628 section 3.3)
-		r.HandleFunc("/", s.handleDeviceVerification()) // Handle both GET and POST
-
-		// OAuth callback handling
-		r.Get("/complete", s.handleDeviceComplete())
+		// User verification page and form handling (RFC 8628 section 3.3)
+		r.Get("/", s.handleDeviceVerification())     // Show verification form
+		r.Post("/", s.handleDeviceVerification())    // Process verification form
+		r.Get("/complete", s.handleDeviceComplete()) // OAuth callback handling
 	})
 }
 
