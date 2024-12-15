@@ -19,6 +19,10 @@ func (s *server) handleHealth() http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Always set required headers per RFC 8628
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+
 		resp := healthResponse{
 			Status:  "ok",
 			Version: Version,
@@ -37,12 +41,17 @@ func (s *server) handleHealth() http.HandlerFunc {
 // Device code request handler implements RFC 8628 section 3.2
 func (s *server) handleDeviceCode() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628 section 3.2
+		// Set required headers per RFC 8628 section 3.2 before any returns
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 
+		if r.Method != http.MethodPost {
+			writeError(w, "invalid_request", "POST method required (Section 3.1)")
+			return
+		}
+
 		if err := r.ParseForm(); err != nil {
-			writeError(w, "invalid_request", "Invalid request format")
+			writeError(w, "invalid_request", "Invalid request format (Section 3.1)")
 			return
 		}
 
@@ -56,15 +65,14 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 
 		clientID := r.Form.Get("client_id")
 		if clientID == "" {
-			writeError(w, "invalid_request", "client_id is REQUIRED for public clients (Section 3.1)")
+			writeError(w, "invalid_request", "The client_id parameter is REQUIRED (Section 3.1)")
 			return
 		}
 
 		scope := r.Form.Get("scope")
-
 		code, err := s.flow.RequestDeviceCode(r.Context(), clientID, scope)
 		if err != nil {
-			writeError(w, "server_error", err.Error())
+			writeError(w, "server_error", "Error generating device code (Section 3.2)")
 			return
 		}
 
@@ -75,16 +83,21 @@ func (s *server) handleDeviceCode() http.HandlerFunc {
 // Device token polling handler implements RFC 8628 section 3.4
 func (s *server) handleDeviceToken() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Set required headers per RFC 8628
+		// Set required headers per RFC 8628 before any returns
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := r.ParseForm(); err != nil {
-			writeError(w, "invalid_request", "Invalid request format")
+		if r.Method != http.MethodPost {
+			writeError(w, "invalid_request", "POST method required (Section 3.4)")
 			return
 		}
 
-		// Check for duplicate parameters
+		if err := r.ParseForm(); err != nil {
+			writeError(w, "invalid_request", "Invalid request format (Section 3.4)")
+			return
+		}
+
+		// Check for duplicate parameters per RFC 8628
 		for _, values := range r.Form {
 			if len(values) > 1 {
 				writeError(w, "invalid_request", "Parameters MUST NOT be included more than once (Section 3.4)")
@@ -94,18 +107,18 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 
 		grantType := r.Form.Get("grant_type")
 		if grantType == "" {
-			writeError(w, "invalid_request", "grant_type is REQUIRED (Section 3.4)")
+			writeError(w, "invalid_request", "The grant_type parameter is REQUIRED (Section 3.4)")
 			return
 		}
 
 		if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
-			writeError(w, "unsupported_grant_type", "grant_type must be urn:ietf:params:oauth:grant-type:device_code")
+			writeError(w, "unsupported_grant_type", "Only urn:ietf:params:oauth:grant-type:device_code is supported (Section 3.4)")
 			return
 		}
 
 		deviceCode := r.Form.Get("device_code")
 		if deviceCode == "" {
-			writeError(w, "invalid_request", "device_code is REQUIRED (Section 3.4)")
+			writeError(w, "invalid_request", "The device_code parameter is REQUIRED (Section 3.4)")
 			return
 		}
 
@@ -113,15 +126,15 @@ func (s *server) handleDeviceToken() http.HandlerFunc {
 		if err != nil {
 			switch {
 			case errors.Is(err, deviceflow.ErrInvalidDeviceCode):
-				writeError(w, "invalid_grant", "Invalid or unknown device code")
+				writeError(w, "invalid_grant", "The device_code is invalid or expired (Section 3.5)")
 			case errors.Is(err, deviceflow.ErrExpiredCode):
-				writeError(w, "expired_token", "Device code has expired")
+				writeError(w, "expired_token", "The device_code has expired (Section 3.5)")
 			case errors.Is(err, deviceflow.ErrPendingAuthorization):
-				writeError(w, "authorization_pending", "Authorization is pending; please continue polling")
+				writeError(w, "authorization_pending", "The authorization request is still pending (Section 3.5)")
 			case errors.Is(err, deviceflow.ErrSlowDown):
-				writeError(w, "slow_down", "Polling too frequently; increase polling interval by 5 seconds")
+				writeError(w, "slow_down", "Please slow down polling by increasing your interval by 5 seconds (Section 3.5)")
 			default:
-				writeError(w, "server_error", err.Error())
+				writeError(w, "server_error", "An unexpected error occurred processing the request")
 			}
 			return
 		}
@@ -139,7 +152,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 				Title:   "Invalid Request",
 				Message: "Missing or invalid state parameter",
 			}); err != nil {
-				http.Error(w, "error rendering page", http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -150,7 +163,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 				Title:   "Authorization Failed",
 				Message: "No authorization code received",
 			}); err != nil {
-				http.Error(w, "error rendering page", http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -162,7 +175,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 				Title:   "Authorization Failed",
 				Message: "Device code verification failed",
 			}); err != nil {
-				http.Error(w, "error rendering page", http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -174,7 +187,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 				Title:   "Authorization Failed",
 				Message: "Unable to complete authorization",
 			}); err != nil {
-				http.Error(w, "error rendering page", http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -185,7 +198,7 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 				Title:   "Authorization Failed",
 				Message: "Unable to complete device authorization",
 			}); err != nil {
-				http.Error(w, "error rendering page", http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -194,47 +207,47 @@ func (s *server) handleDeviceComplete() http.HandlerFunc {
 		if err := s.templates.RenderComplete(w, templates.CompleteData{
 			Message: "You have successfully authorized the device. You may now close this window.",
 		}); err != nil {
-			http.Error(w, "error rendering page", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
 }
 
 // writeJSON writes a JSON response with appropriate headers per RFC 8628
 func writeJSON(w http.ResponseWriter, v interface{}) {
-	// Ensure Cache-Control and Content-Type are set for all JSON responses
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 
-	// Handle JSON encoding errors properly
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		// If JSON encoding fails, return a 500 error
+		// If encoding fails, send error response per RFC 8628
 		w.WriteHeader(http.StatusInternalServerError)
-		// Attempt to write a basic error, ignoring encoding errors
-		rawError := []byte(`{"error":"server_error","error_description":"Failed to encode response"}`)
-		w.Write(rawError) // Ignore write error as we can't do anything about it
-		return
+		// Create error response manually
+		errData := map[string]string{
+			"error":             "server_error",
+			"error_description": "Failed to encode response",
+		}
+		errorBytes, _ := json.Marshal(errData)
+		_, _ = w.Write(errorBytes)
 	}
 }
 
 // writeError sends an RFC 8628 compliant error response
 func writeError(w http.ResponseWriter, code string, description string) {
-	// Ensure proper headers are set before any potential errors
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 
-	resp := struct {
-		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description,omitempty"`
-	}{
-		Error:            code,
-		ErrorDescription: strings.TrimSpace(description),
+	data := map[string]string{
+		"error":             code,
+		"error_description": strings.TrimSpace(description),
 	}
 
-	// Handle JSON encoding errors properly
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		// If JSON encoding fails after headers are sent, we can only attempt a raw write
-		rawError := []byte(`{"error":"server_error","error_description":"Failed to encode error response"}`)
-		w.Write(rawError) // Ignore write error as response is already in flight
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// Create error response manually as fallback
+		errData := map[string]string{
+			"error":             "server_error",
+			"error_description": "Failed to encode error response",
+		}
+		errorBytes, _ := json.Marshal(errData)
+		_, _ = w.Write(errorBytes)
 	}
 }
