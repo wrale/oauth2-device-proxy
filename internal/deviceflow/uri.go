@@ -12,7 +12,7 @@ import (
 // It returns both the base verification URI and the complete URI that includes the user code:
 // - verification_uri: The base URI that users can visit to enter their code
 // - verification_uri_complete: Optional URI that includes the user code (e.g., for QR codes)
-func (f *Flow) buildVerificationURIs(userCode string) (string, string) {
+func (f *flowImpl) buildVerificationURIs(userCode string) (string, string) {
 	// Parse the base URL to properly handle existing paths
 	baseURL, err := url.Parse(f.baseURL)
 	if err != nil {
