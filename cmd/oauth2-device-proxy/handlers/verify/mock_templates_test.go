@@ -163,16 +163,16 @@ func (m *mockTemplates) WithGenerateQRCode(fn func(uri string) (string, error)) 
 
 // defaultRender uses the pre-initialized templates to handle rendering
 func (m *mockTemplates) defaultRender(w http.ResponseWriter, name string, data interface{}) error {
-	// Create safe writer if needed
-	if _, ok := w.(*templates.SafeWriter); !ok {
-		w = &templates.SafeWriter{
-			ResponseWriter: w,
-			StatusCode:     http.StatusOK,
-		}
+	// Create proper safe writer by reusing the exposed template functionality
+	sw := &templates.SafeWriter{
+		ResponseWriter: w,
+		Written:        false,
+		// Use default OK status since this is for tests
+		StatusCode: http.StatusOK,
 	}
 
 	// Set content type
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	sw.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	// Render template to buffer first
 	var buf bytes.Buffer
@@ -185,7 +185,7 @@ func (m *mockTemplates) defaultRender(w http.ResponseWriter, name string, data i
 	}
 
 	// Write the result
-	if _, err := io.Copy(w, &buf); err != nil {
+	if _, err := io.Copy(sw, &buf); err != nil {
 		return &templates.TemplateError{
 			Cause:   err,
 			Message: "failed to write response",
