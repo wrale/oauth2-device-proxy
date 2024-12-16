@@ -22,11 +22,11 @@ type CodeResponse struct {
 
 // Handler processes device code requests per RFC 8628 section 3.2
 type Handler struct {
-	flow *deviceflow.Flow
+	flow deviceflow.Flow
 }
 
 // New creates a new device code request handler
-func New(flow *deviceflow.Flow) *Handler {
+func New(flow deviceflow.Flow) *Handler {
 	return &Handler{
 		flow: flow,
 	}

@@ -4,6 +4,8 @@ package deviceflow
 import (
 	"context"
 	"errors"
+	"sync"
+	"time"
 
 	"github.com/wrale/oauth2-device-proxy/internal/validation"
 )
@@ -13,10 +15,11 @@ var ErrStoreUnhealthy = errors.New("store unhealthy")
 
 // mockStore implements Store interface for testing
 type mockStore struct {
+	mu          sync.Mutex // Protect concurrent map access
 	deviceCodes map[string]*DeviceCode
 	userCodes   map[string]string // user code -> device code
 	tokens      map[string]*TokenResponse
-	attempts    map[string]int // device code -> attempt count
+	polls       map[string][]time.Time // device code -> poll timestamps
 	healthy     bool
 }
 
@@ -25,7 +28,7 @@ func newMockStore() *mockStore {
 		deviceCodes: make(map[string]*DeviceCode),
 		userCodes:   make(map[string]string),
 		tokens:      make(map[string]*TokenResponse),
-		attempts:    make(map[string]int),
+		polls:       make(map[string][]time.Time),
 		healthy:     true,
 	}
 }
@@ -34,6 +37,9 @@ func (m *mockStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error 
 	if !m.healthy {
 		return ErrStoreUnhealthy
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.deviceCodes[code.DeviceCode] = code
 	m.userCodes[validation.NormalizeCode(code.UserCode)] = code.DeviceCode
 	return nil
@@ -43,6 +49,9 @@ func (m *mockStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Devi
 	if !m.healthy {
 		return nil, ErrStoreUnhealthy
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	code, exists := m.deviceCodes[deviceCode]
 	if !exists {
 		return nil, nil
@@ -54,25 +63,27 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 	if !m.healthy {
 		return nil, ErrStoreUnhealthy
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	deviceCode, exists := m.userCodes[validation.NormalizeCode(userCode)]
 	if !exists {
 		return nil, nil
 	}
-	return m.GetDeviceCode(ctx, deviceCode)
-}
-
-func (m *mockStore) SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error {
-	if !m.healthy {
-		return ErrStoreUnhealthy
+	code, exists := m.deviceCodes[deviceCode]
+	if !exists {
+		return nil, nil
 	}
-	m.tokens[deviceCode] = token
-	return nil
+	return code, nil
 }
 
-func (m *mockStore) GetToken(ctx context.Context, deviceCode string) (*TokenResponse, error) {
+func (m *mockStore) GetTokenResponse(ctx context.Context, deviceCode string) (*TokenResponse, error) {
 	if !m.healthy {
 		return nil, ErrStoreUnhealthy
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	token, exists := m.tokens[deviceCode]
 	if !exists {
 		return nil, nil
@@ -80,10 +91,24 @@ func (m *mockStore) GetToken(ctx context.Context, deviceCode string) (*TokenResp
 	return token, nil
 }
 
+func (m *mockStore) SaveTokenResponse(ctx context.Context, deviceCode string, token *TokenResponse) error {
+	if !m.healthy {
+		return ErrStoreUnhealthy
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.tokens[deviceCode] = token
+	return nil
+}
+
 func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) error {
 	if !m.healthy {
 		return ErrStoreUnhealthy
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	code, exists := m.deviceCodes[deviceCode]
 	if !exists {
 		return nil
@@ -91,7 +116,57 @@ func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) err
 	delete(m.deviceCodes, deviceCode)
 	delete(m.userCodes, validation.NormalizeCode(code.UserCode))
 	delete(m.tokens, deviceCode)
-	delete(m.attempts, deviceCode)
+	delete(m.polls, deviceCode)
+	return nil
+}
+
+func (m *mockStore) GetPollCount(ctx context.Context, deviceCode string, window time.Duration) (int, error) {
+	if !m.healthy {
+		return 0, ErrStoreUnhealthy
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	polls := m.polls[deviceCode]
+	if len(polls) == 0 {
+		return 0, nil
+	}
+
+	// Count polls within window
+	cutoff := time.Now().Add(-window)
+	count := 0
+	for _, ts := range polls {
+		if ts.After(cutoff) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *mockStore) UpdatePollTimestamp(ctx context.Context, deviceCode string) error {
+	if !m.healthy {
+		return ErrStoreUnhealthy
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	code, exists := m.deviceCodes[deviceCode]
+	if !exists {
+		return nil
+	}
+
+	code.LastPoll = time.Now()
+	return nil
+}
+
+func (m *mockStore) IncrementPollCount(ctx context.Context, deviceCode string) error {
+	if !m.healthy {
+		return ErrStoreUnhealthy
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.polls[deviceCode] = append(m.polls[deviceCode], time.Now())
 	return nil
 }
 
@@ -100,17 +175,4 @@ func (m *mockStore) CheckHealth(ctx context.Context) error {
 		return ErrStoreUnhealthy
 	}
 	return nil
-}
-
-func (m *mockStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
-	if !m.healthy {
-		return false, ErrStoreUnhealthy
-	}
-
-	// Track verification attempts for this code
-	m.attempts[deviceCode]++
-
-	// RFC 8628 section 5.2 recommends limiting verification attempts
-	maxAttempts := 50
-	return m.attempts[deviceCode] <= maxAttempts, nil
 }
