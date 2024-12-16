@@ -43,10 +43,14 @@ func newServer(cfg Config, flow deviceflow.Flow, csrfManager *csrf.Manager) (*se
 		},
 	}
 
-	// Initialize handlers
+	// Initialize handlers per RFC 8628 requirements:
+	// - /health for server status
+	// - /device/code for authorization requests (§3.1-3.2)
+	// - /device/token for token requests (§3.4-3.5)
+	// - /device for user interaction (§3.3)
 	healthHandler := health.New(flow)
 	deviceHandler := device.New(flow)
-	tokenHandler := token.New(flow)
+	tokenHandler := token.New(token.Config{Flow: flow}) // Use Config struct
 	verifyHandler := verify.New(verify.Config{
 		Flow:      flow,
 		Templates: tmpls,
@@ -60,7 +64,7 @@ func newServer(cfg Config, flow deviceflow.Flow, csrfManager *csrf.Manager) (*se
 		mux: chi.NewRouter(),
 	}
 
-	// Set up middleware
+	// Set up middleware stack
 	srv.mux.Use(middleware.Logger)
 	srv.mux.Use(middleware.Recoverer)
 	srv.mux.Use(middleware.RealIP)
@@ -70,10 +74,10 @@ func newServer(cfg Config, flow deviceflow.Flow, csrfManager *csrf.Manager) (*se
 	srv.mux.Handle("/health", healthHandler)
 
 	// Device authorization endpoints (RFC 8628)
-	srv.mux.Handle("/device/code", deviceHandler)
-	srv.mux.Handle("/device/token", tokenHandler)
+	srv.mux.Handle("/device/code", deviceHandler) // §3.1-3.2
+	srv.mux.Handle("/device/token", tokenHandler) // §3.4-3.5
 
-	// User verification endpoints
+	// User verification endpoints - §3.3
 	srv.mux.Get("/device", verifyHandler.HandleForm)
 	srv.mux.Post("/device", verifyHandler.HandleSubmit)
 	srv.mux.Get("/device/complete", verifyHandler.HandleComplete)
