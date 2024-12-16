@@ -15,7 +15,7 @@ import (
 
 // Handler processes user verification flow per RFC 8628 section 3.3
 type Handler struct {
-	flow      *deviceflow.Flow
+	flow      deviceflow.Flow // Changed from *deviceflow.Flow to deviceflow.Flow
 	templates *templates.Templates
 	csrf      *csrf.Manager
 	oauth     *oauth2.Config
@@ -24,7 +24,7 @@ type Handler struct {
 
 // Config contains handler configuration
 type Config struct {
-	Flow      *deviceflow.Flow
+	Flow      deviceflow.Flow // Changed from *deviceflow.Flow to deviceflow.Flow
 	Templates *templates.Templates
 	CSRF      *csrf.Manager
 	OAuth     *oauth2.Config
