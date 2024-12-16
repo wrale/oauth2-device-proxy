@@ -122,6 +122,7 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 			var renderedVerify, renderedError bool
 			var gotQRCode bool
 
+			// Create and configure mock templates
 			tmpls := newMockTemplates().
 				WithRenderVerify(func(w http.ResponseWriter, data templates.VerifyData) error {
 					renderedVerify = true
@@ -144,7 +145,7 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 
 			handler := New(Config{
 				Flow:      &mockFlow{},
-				Templates: tmpls,
+				Templates: tmpls.ToTemplates(), // Use ToTemplates() to get proper type
 				CSRF:      csrf,
 				BaseURL:   "https://example.com",
 			})
@@ -259,7 +260,7 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 
 			handler := New(Config{
 				Flow:      flow,
-				Templates: tmpls,
+				Templates: tmpls.ToTemplates(), // Use ToTemplates() to get proper type
 				CSRF:      csrf,
 				OAuth:     &oauth2.Config{},
 				BaseURL:   "https://example.com",
