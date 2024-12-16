@@ -195,25 +195,6 @@ func (f *flowImpl) CheckDeviceCode(ctx context.Context, deviceCode string) (*Tok
 	return token, nil
 }
 
-// VerifyUserCode validates user code and returns associated device code
-func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	code, err := f.store.GetDeviceCodeByUserCode(ctx, userCode)
-	if err != nil {
-		return nil, err
-	}
-
-	if code == nil {
-		return nil, ErrInvalidUserCode
-	}
-
-	// Check expiration
-	if time.Now().After(code.ExpiresAt) {
-		return nil, ErrExpiredCode
-	}
-
-	return code, nil
-}
-
 // CompleteAuthorization completes the flow with token response
 func (f *flowImpl) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	return f.store.SaveTokenResponse(ctx, deviceCode, token)
