@@ -36,11 +36,11 @@ func newMockTemplates() *mockTemplates {
 
 	// Set default mock QR code generator per RFC 8628 section 3.3.1
 	mock.generateQR = func(uri string) (string, error) {
-		return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-			<title>Test QR Code: %s</title>
+		return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+			<title>Test QR Code</title>
 			<rect width="100" height="100" fill="white"/>
 			<rect x="25" y="25" width="50" height="50"/>
-		</svg>`, uri), nil
+		</svg>`, nil
 	}
 
 	// Create base template with layout
@@ -147,11 +147,13 @@ func (m *mockTemplates) GenerateQRCode(uri string) (string, error) {
 	if fn != nil {
 		return fn(uri)
 	}
-	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+
+	// Return static test QR code per RFC 8628 section 3.3.1
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
 		<title>Default Test QR Code</title>
 		<rect width="100" height="100" fill="white"/>
 		<rect x="25" y="25" width="50" height="50"/>
-	</svg>`), nil
+	</svg>`, nil
 }
 
 // WithRenderVerify sets the mock RenderVerify function
