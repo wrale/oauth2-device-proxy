@@ -225,10 +225,10 @@ z: ## Copy recent git log messages to clipboard while displaying
 r: ## Combine tree, make all, git log, and codestate outputs with separators
 	@echo "==> Running combined commands and copying output..."
 	@{ \
-		echo "=== Tree Structure ==="; \
-		tree --gitignore; \
 		echo -e "\n=== Git Log ==="; \
 		git log -n8; \
+		echo "=== Tree Structure ==="; \
+		tree --gitignore; \
 		echo -e "\n=== Make All Output ==="; \
 		make all; \
 	} 2>&1 | $(COPY_TO_CLIPBOARD)

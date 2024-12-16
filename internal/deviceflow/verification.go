@@ -11,38 +11,39 @@ import (
 // VerifyUserCode verifies a user code and checks rate limiting.
 // Error checking follows exact RFC 8628 section 3.5 order:
 // 1. Store errors take precedence (authorization server errors)
-// 2. Code existence and state (authorization pending, expired)
-// 3. Rate limiting (slow_down)
-// 4. Code format validation
+// 2. Code validation and lookup
+// 3. Code expiration check
+// 4. Rate limiting check
 func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// Normalize for lookup - validation comes later
+	// Run format validation first to catch obvious issues
+	if err := validation.ValidateUserCode(userCode); err != nil {
+		return nil, NewDeviceFlowError(
+			ErrorCodeInvalidRequest,
+			"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
+		)
+	}
+
+	// Normalize for lookup
 	normalized := validation.NormalizeCode(userCode)
 
-	// First check store errors - these take precedence per RFC 8628
+	// Check store errors first per RFC 8628
 	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
 	if err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Error validating code: internal error",
+			"Internal server error",
 		)
 	}
 
-	// Code existence check next
+	// Check code existence next
 	if code == nil {
-		// For non-existent codes, provide validation feedback
-		if err := validation.ValidateUserCode(userCode); err != nil {
-			return nil, NewDeviceFlowError(
-				ErrorCodeInvalidRequest,
-				"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
-			)
-		}
 		return nil, NewDeviceFlowError(
 			ErrorCodeInvalidRequest,
 			"Invalid user code: code not found",
 		)
 	}
 
-	// Next check expiration
+	// Check expiration third
 	if time.Now().After(code.ExpiresAt) {
 		return nil, NewDeviceFlowError(
 			ErrorCodeExpiredToken,
@@ -50,26 +51,19 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 		)
 	}
 
-	// Rate limiting check per RFC 8628 section 5.2
+	// Finally check rate limiting per RFC 8628 section 5.2
 	pollCount, err := f.store.GetPollCount(ctx, code.DeviceCode, f.rateLimitWindow)
 	if err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Error checking rate limit: internal error",
+			"Internal server error",
 		)
 	}
+
 	if pollCount >= f.maxPollsPerMin {
 		return nil, NewDeviceFlowError(
 			ErrorCodeSlowDown,
 			"Too many verification attempts, please wait",
-		)
-	}
-
-	// For valid codes, run format validation last to catch any issues
-	if err := validation.ValidateUserCode(userCode); err != nil {
-		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
-			"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
 		)
 	}
 
