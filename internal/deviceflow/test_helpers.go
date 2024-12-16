@@ -20,6 +20,7 @@ type mockStore struct {
 	userCodes    map[string]string // user code -> device code
 	tokens       map[string]*TokenResponse
 	polls        map[string][]time.Time // device code -> poll timestamps
+	attempts     map[string]int         // device code -> verification attempts
 	healthy      bool
 	mockUserCode string // For testing specific user code scenarios
 }
@@ -30,6 +31,7 @@ func newMockStore() *mockStore {
 		userCodes:   make(map[string]string),
 		tokens:      make(map[string]*TokenResponse),
 		polls:       make(map[string][]time.Time),
+		attempts:    make(map[string]int),
 		healthy:     true,
 	}
 }
@@ -123,6 +125,7 @@ func (m *mockStore) DeleteDeviceCode(ctx context.Context, deviceCode string) err
 	delete(m.userCodes, validation.NormalizeCode(code.UserCode))
 	delete(m.tokens, deviceCode)
 	delete(m.polls, deviceCode)
+	delete(m.attempts, deviceCode) // Also clean up attempts
 	return nil
 }
 
@@ -174,6 +177,18 @@ func (m *mockStore) IncrementPollCount(ctx context.Context, deviceCode string) e
 
 	m.polls[deviceCode] = append(m.polls[deviceCode], time.Now())
 	return nil
+}
+
+func (m *mockStore) IncrementVerificationAttempts(deviceCode string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.attempts[deviceCode]++
+}
+
+func (m *mockStore) GetVerificationAttempts(deviceCode string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.attempts[deviceCode]
 }
 
 func (m *mockStore) CheckHealth(ctx context.Context) error {
