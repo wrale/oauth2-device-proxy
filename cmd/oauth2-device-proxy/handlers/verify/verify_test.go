@@ -20,6 +20,8 @@ type mockFlow struct {
 	verifyUserCode        func(ctx context.Context, code string) (*deviceflow.DeviceCode, error)
 	getDeviceCode         func(ctx context.Context, code string) (*deviceflow.DeviceCode, error)
 	completeAuthorization func(ctx context.Context, code string, token *deviceflow.TokenResponse) error
+	checkDeviceCode       func(ctx context.Context, deviceCode string) (*deviceflow.TokenResponse, error)
+	requestDeviceCode     func(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error)
 }
 
 func (m *mockFlow) VerifyUserCode(ctx context.Context, code string) (*deviceflow.DeviceCode, error) {
@@ -40,6 +42,24 @@ func (m *mockFlow) CompleteAuthorization(ctx context.Context, code string, token
 	if m.completeAuthorization != nil {
 		return m.completeAuthorization(ctx, code, token)
 	}
+	return nil
+}
+
+func (m *mockFlow) CheckDeviceCode(ctx context.Context, deviceCode string) (*deviceflow.TokenResponse, error) {
+	if m.checkDeviceCode != nil {
+		return m.checkDeviceCode(ctx, deviceCode)
+	}
+	return nil, deviceflow.ErrPendingAuthorization // Per RFC 8628 section 3.5
+}
+
+func (m *mockFlow) RequestDeviceCode(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error) {
+	if m.requestDeviceCode != nil {
+		return m.requestDeviceCode(ctx, clientID, scope)
+	}
+	return nil, errors.New("not implemented in mock")
+}
+
+func (m *mockFlow) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
