@@ -45,20 +45,18 @@ func New(cfg Config) *Handler {
 	}
 }
 
-// headerWritten checks if response headers have been written
+// headerWritten checks if response headers have been written by checking for
+// the Written() method that both SafeWriter and common middleware wrappers implement
 func headerWritten(w http.ResponseWriter) bool {
-	if rw, ok := w.(*templates.SafeWriter); ok {
-		return rw.Written()
+	type writeTracker interface {
+		Written() bool
 	}
-	if sw, ok := w.(http.ResponseWriter); ok {
-		// Use type assertion to check for common middleware wrappers
-		type writeTracker interface {
-			Written() bool
-		}
-		if wt, ok := sw.(writeTracker); ok {
-			return wt.Written()
-		}
+
+	// Check for SafeWriter or any other writer that tracks header state
+	if wt, ok := w.(writeTracker); ok {
+		return wt.Written()
 	}
+
 	// Default to assuming headers not written if we can't determine
 	return false
 }
