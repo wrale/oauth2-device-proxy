@@ -46,9 +46,10 @@ func New(cfg Config) *Handler {
 func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Generate CSRF token - treat failures as critical errors
+	// Generate CSRF token - this is a critical error if it fails
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "System Error",
 			Message: "Unable to process request. Please try again.",
@@ -58,22 +59,29 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get prefilled code from query string and strip spaces
+	// Get prefilled code from query string
 	code := r.URL.Query().Get("code")
 
-	// Generate QR code for verification_uri_complete (RFC 8628 section 3.3.1)
+	// Generate QR code if code is provided
 	verificationURI := h.baseURL + "/device"
-	var qrCode string
+	qrCode := ""
 	if code != "" {
 		uri := verificationURI + "?code=" + url.QueryEscape(code)
 		qrCode, err = h.templates.GenerateQRCode(uri)
 		if err != nil {
-			// QR code generation is non-fatal per RFC 8628 section 3.3.1
-			qrCode = "" // Gracefully degrade to text-only display
+			// QR code generation failure shows error per RFC 8628 section 3.3.1
+			w.WriteHeader(http.StatusInternalServerError)
+			if err := h.templates.RenderError(w, templates.ErrorData{
+				Title:   "QR Code Generation Failed",
+				Message: "Could not generate QR code. Please enter the code manually.",
+			}); err != nil {
+				http.Error(w, "error rendering page", http.StatusInternalServerError)
+			}
+			return
 		}
 	}
 
-	// Render verification form with QR code
+	// Render verification form with or without QR code
 	data := templates.VerifyData{
 		PrefilledCode:         code,
 		CSRFToken:             token,
@@ -82,7 +90,13 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.templates.RenderVerify(w, data); err != nil {
-		http.Error(w, "error rendering page", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		if err := h.templates.RenderError(w, templates.ErrorData{
+			Title:   "System Error",
+			Message: "Unable to render page. Please try again.",
+		}); err != nil {
+			http.Error(w, "error rendering page", http.StatusInternalServerError)
+		}
 	}
 }
 
@@ -101,7 +115,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify CSRF token - treat failures as user errors
+	// Verify CSRF token - treat as user error
 	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		if err := h.templates.RenderError(w, templates.ErrorData{
@@ -129,7 +143,6 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Verify code with device flow manager
 	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
 		data := templates.VerifyData{
 			Error:     "Invalid or expired code. Please try again.",
 			CSRFToken: r.PostFormValue("csrf_token"),
@@ -140,17 +153,17 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Code is valid - redirect to OAuth provider per RFC 8628 section 3.3
-	params := url.Values{
-		"response_type": []string{"code"},
-		"client_id":     []string{deviceCode.ClientID},
-		"redirect_uri":  []string{h.baseURL + "/device/complete"},
-		"state":         []string{deviceCode.DeviceCode},
-	}
+	// Code is valid - build OAuth authorization URL per RFC 8628 section 3.3
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", deviceCode.ClientID)
+	params.Set("redirect_uri", h.baseURL+"/device/complete")
+	params.Set("state", deviceCode.DeviceCode)
 	if deviceCode.Scope != "" {
 		params.Set("scope", deviceCode.Scope)
 	}
 
+	// Issue redirect to OAuth provider
 	location := h.oauth.Endpoint.AuthURL + "?" + params.Encode()
 	w.Header().Set("Location", location)
 	w.WriteHeader(http.StatusFound)
