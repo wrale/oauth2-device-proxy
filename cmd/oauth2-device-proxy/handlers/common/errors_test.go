@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -72,8 +73,11 @@ func TestWriteError(t *testing.T) {
 }
 
 func TestWriteJSONError(t *testing.T) {
+	// Create a test error by trying to decode invalid JSON
+	testErr := json.NewDecoder(strings.NewReader("{invalid")).Decode(&struct{}{})
+
 	w := httptest.NewRecorder()
-	WriteJSONError(w, json.ErrSyntaxError([]byte(""), 0))
+	WriteJSONError(w, testErr)
 
 	// Check status and headers
 	if w.Code != http.StatusInternalServerError {

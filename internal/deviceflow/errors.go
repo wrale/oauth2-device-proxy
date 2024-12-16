@@ -15,6 +15,7 @@ const (
 	ErrorCodeInvalidGrant         = "invalid_grant"
 	ErrorCodeInvalidRequest       = "invalid_request"
 	ErrorCodeUnsupportedGrant     = "unsupported_grant_type"
+	ErrorCodeServerError          = "server_error" // For internal server errors
 )
 
 // Error descriptions defined by RFC 8628
@@ -35,6 +36,7 @@ const (
 	ErrorDescAccessDenied         = "The user denied the authorization request"
 	ErrorDescExpiredToken         = "The device_code has expired"
 	ErrorDescInvalidDeviceCode    = "The device_code is invalid or malformed"
+	ErrorDescServerError          = "An unexpected error occurred"
 
 	// Section 6.1 error descriptions
 	ErrorDescInvalidUserCode   = "Invalid user code format"
@@ -71,6 +73,7 @@ var (
 	ErrPendingAuthorization = NewDeviceFlowError(ErrorCodeAuthorizationPending, ErrorDescAuthorizationPending)
 	ErrSlowDown             = NewDeviceFlowError(ErrorCodeSlowDown, ErrorDescSlowDown)
 	ErrAccessDenied         = NewDeviceFlowError(ErrorCodeAccessDenied, ErrorDescAccessDenied)
+	ErrServerError          = NewDeviceFlowError(ErrorCodeServerError, ErrorDescServerError)
 
 	// Request validation errors per RFC 8628 section 3.1
 	ErrMissingClientID = NewDeviceFlowError(ErrorCodeInvalidRequest, ErrorDescMissingClientID)
