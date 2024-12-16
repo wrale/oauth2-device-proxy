@@ -2,6 +2,7 @@ package verify
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
@@ -50,6 +51,16 @@ func newMockTemplates() *mockTemplates {
 
 	mock := &mockTemplates{
 		tmpl: base,
+		// Set default mock QR code generator for tests that don't override it
+		generateQR: func(uri string) (string, error) {
+			// Create simple test QR code SVG - this just needs to be valid SVG
+			// The real QR code implementation is in internal/templates/qrcode.go
+			return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+				<title>Test QR for %s</title>
+				<rect width="100" height="100" fill="white"/>
+				<rect x="25" y="25" width="50" height="50"/>
+			</svg>`, uri), nil
+		},
 	}
 
 	// Initialize templates for proper SafeWriter creation
@@ -131,7 +142,8 @@ func (m *mockTemplates) GenerateQRCode(uri string) (string, error) {
 	if fn != nil {
 		return fn(uri)
 	}
-	return "", nil // Default empty QR code for tests
+	// Return empty SVG by default
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`, nil
 }
 
 // WithRenderVerify sets the mock RenderVerify function while maintaining thread safety
