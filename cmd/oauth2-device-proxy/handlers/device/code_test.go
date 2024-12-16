@@ -10,20 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wrale/oauth2-device-proxy/cmd/oauth2-device-proxy/handlers/common/test"
 	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
-
-// mockFlow implements a minimal deviceflow.Flow for testing
-type mockFlow struct {
-	requestDeviceCode func(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error)
-}
-
-func (m *mockFlow) RequestDeviceCode(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error) {
-	if m.requestDeviceCode != nil {
-		return m.requestDeviceCode(ctx, clientID, scope)
-	}
-	return nil, nil
-}
 
 func TestDeviceCodeHandler(t *testing.T) {
 	validExpiry := time.Now().Add(5 * time.Minute)
@@ -100,9 +89,9 @@ func TestDeviceCodeHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock
-			flow := &mockFlow{
-				requestDeviceCode: func(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error) {
+			// Setup mock using common test mock implementation
+			flow := &test.MockFlow{
+				RequestDeviceCodeFunc: func(ctx context.Context, clientID string, scope string) (*deviceflow.DeviceCode, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -159,7 +148,7 @@ func TestDeviceCodeHandler(t *testing.T) {
 				return
 			}
 
-			// Validate successful response format
+			// Validate successful response format per RFC 8628 section 3.2
 			if tt.validateBody {
 				required := []string{
 					"device_code",
@@ -190,7 +179,7 @@ func TestDeviceCodeHandler(t *testing.T) {
 					}
 				}
 
-				// Check expires_in is reasonable
+				// Check expires_in is reasonable per RFC 8628 section 3.2
 				if got := int(resp["expires_in"].(float64)); got <= 0 {
 					t.Error("expires_in must be positive")
 				}
