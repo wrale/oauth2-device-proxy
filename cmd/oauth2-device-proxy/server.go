@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -50,7 +49,7 @@ func newServer(cfg Config, flow deviceflow.Flow, csrfManager *csrf.Manager) (*se
 	// - /device for user interaction (§3.3)
 	healthHandler := health.New(flow)
 	deviceHandler := device.New(flow)
-	tokenHandler := token.New(token.Config{Flow: flow}) // Use Config struct
+	tokenHandler := token.New(token.Config{Flow: flow})
 	verifyHandler := verify.New(verify.Config{
 		Flow:      flow,
 		Templates: tmpls,

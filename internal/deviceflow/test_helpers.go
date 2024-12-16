@@ -15,12 +15,13 @@ var ErrStoreUnhealthy = errors.New("store unhealthy")
 
 // mockStore implements Store interface for testing
 type mockStore struct {
-	mu          sync.Mutex // Protect concurrent map access
-	deviceCodes map[string]*DeviceCode
-	userCodes   map[string]string // user code -> device code
-	tokens      map[string]*TokenResponse
-	polls       map[string][]time.Time // device code -> poll timestamps
-	healthy     bool
+	mu           sync.Mutex // Protect concurrent map access
+	deviceCodes  map[string]*DeviceCode
+	userCodes    map[string]string // user code -> device code
+	tokens       map[string]*TokenResponse
+	polls        map[string][]time.Time // device code -> poll timestamps
+	healthy      bool
+	mockUserCode string // For testing specific user code scenarios
 }
 
 func newMockStore() *mockStore {
@@ -65,6 +66,11 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Return fixed user code if set for testing
+	if m.mockUserCode != "" {
+		return &DeviceCode{UserCode: m.mockUserCode}, nil
+	}
 
 	deviceCode, exists := m.userCodes[validation.NormalizeCode(userCode)]
 	if !exists {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
 
 type mockFlow struct {
