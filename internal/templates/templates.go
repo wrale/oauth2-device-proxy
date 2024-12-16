@@ -20,11 +20,17 @@ var requiredDefinitions = []string{
 	"title",
 }
 
-// Templates manages the HTML templates
+// Templates manages the HTML templates per RFC 8628 section 3.3
 type Templates struct {
 	verify   *template.Template
 	complete *template.Template
 	error    *template.Template
+
+	// Function overrides for testing
+	RenderVerifyFunc   func(w http.ResponseWriter, data VerifyData) error
+	RenderErrorFunc    func(w http.ResponseWriter, data ErrorData) error
+	RenderCompleteFunc func(w http.ResponseWriter, data CompleteData) error
+	GenerateQRCodeFunc func(uri string) (string, error)
 }
 
 // TemplateError represents a template rendering error
@@ -89,6 +95,41 @@ func LoadTemplates() (*Templates, error) {
 	return t, nil
 }
 
+// SetVerify sets the verify template (for testing)
+func (t *Templates) SetVerify(tmpl *template.Template) {
+	t.verify = tmpl
+}
+
+// SetComplete sets the complete template (for testing)
+func (t *Templates) SetComplete(tmpl *template.Template) {
+	t.complete = tmpl
+}
+
+// SetError sets the error template (for testing)
+func (t *Templates) SetError(tmpl *template.Template) {
+	t.error = tmpl
+}
+
+// SetRenderVerifyFunc overrides the verify render function (for testing)
+func (t *Templates) SetRenderVerifyFunc(fn func(w http.ResponseWriter, data VerifyData) error) {
+	t.RenderVerifyFunc = fn
+}
+
+// SetRenderErrorFunc overrides the error render function (for testing)
+func (t *Templates) SetRenderErrorFunc(fn func(w http.ResponseWriter, data ErrorData) error) {
+	t.RenderErrorFunc = fn
+}
+
+// SetRenderCompleteFunc overrides the complete render function (for testing)
+func (t *Templates) SetRenderCompleteFunc(fn func(w http.ResponseWriter, data CompleteData) error) {
+	t.RenderCompleteFunc = fn
+}
+
+// SetGenerateQRCodeFunc overrides the QR code generation function (for testing)
+func (t *Templates) SetGenerateQRCodeFunc(fn func(uri string) (string, error)) {
+	t.GenerateQRCodeFunc = fn
+}
+
 // SafeWriter wraps an http.ResponseWriter to handle template errors
 type SafeWriter struct {
 	http.ResponseWriter
@@ -136,7 +177,7 @@ func (w *SafeWriter) SetStatusCode(code int) {
 	}
 }
 
-// VerifyData holds data for the code verification page
+// VerifyData holds data for the code verification page per RFC 8628 section 3.3
 type VerifyData struct {
 	PrefilledCode         string
 	CSRFToken             string
@@ -147,6 +188,10 @@ type VerifyData struct {
 
 // RenderVerify renders the code verification page
 func (t *Templates) RenderVerify(w http.ResponseWriter, data VerifyData) error {
+	if t.RenderVerifyFunc != nil {
+		return t.RenderVerifyFunc(w, data)
+	}
+
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.verify, data); err != nil {
 		var templateErr *TemplateError
@@ -170,8 +215,12 @@ type CompleteData struct {
 	Message string
 }
 
-// RenderComplete renders the completion page
+// RenderComplete renders the completion page per RFC 8628 section 3.3
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
+	if t.RenderCompleteFunc != nil {
+		return t.RenderCompleteFunc(w, data)
+	}
+
 	sw := t.NewSafeWriter(w)
 	if err := t.executeToWriter(sw, t.complete, data); err != nil {
 		var templateErr *TemplateError
@@ -195,8 +244,12 @@ type ErrorData struct {
 	Message string
 }
 
-// RenderError renders the error page
+// RenderError renders the error page per RFC 8628 section 3.3
 func (t *Templates) RenderError(w http.ResponseWriter, data ErrorData) error {
+	if t.RenderErrorFunc != nil {
+		return t.RenderErrorFunc(w, data)
+	}
+
 	// If this is a SafeWriter, get the underlying ResponseWriter
 	if sw, ok := w.(*SafeWriter); ok {
 		w = sw.ResponseWriter
@@ -272,4 +325,14 @@ func (t *Templates) RenderToString(tmpl *template.Template, data interface{}) (s
 		return "", fmt.Errorf("rendering template to string: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// GenerateQRCode generates a QR code for verification_uri_complete per RFC 8628 section 3.3.1
+func (t *Templates) GenerateQRCode(uri string) (string, error) {
+	if t.GenerateQRCodeFunc != nil {
+		return t.GenerateQRCodeFunc(uri)
+	}
+
+	// Default empty implementation
+	return "", nil
 }

@@ -27,21 +27,26 @@ type mockTemplates struct {
 
 // newMockTemplates creates a new mock templates instance with default templates
 func newMockTemplates() *mockTemplates {
-	// Create initial template set for defaults
+	// Create initial template set for defaults that satisfy RFC 8628 section 3.3
 	tmpl := template.Must(template.New("mock").Parse(`
-{{define "verify"}}
+{{define "layout"}}
 <!DOCTYPE html>
-<html><body>{{printf "Verify: %+v" .}}</body></html>
+<html><body>{{template "content" .}}</body></html>
+{{end}}
+
+{{define "verify"}}
+{{define "title"}}Verify Device{{end}}
+{{define "content"}}{{printf "Verify: %+v" .}}{{end}}
 {{end}}
 
 {{define "error"}}
-<!DOCTYPE html>
-<html><body>{{printf "Error: %+v" .}}</body></html>
+{{define "title"}}Error{{end}}
+{{define "content"}}{{printf "Error: %+v" .}}{{end}}
 {{end}}
 
 {{define "complete"}}
-<!DOCTYPE html>
-<html><body>{{printf "Complete: %+v" .}}</body></html>
+{{define "title"}}Complete{{end}}
+{{define "content"}}{{printf "Complete: %+v" .}}{{end}}
 {{end}}
 `))
 
@@ -54,22 +59,24 @@ func newMockTemplates() *mockTemplates {
 func (m *mockTemplates) ToTemplates() *templates.Templates {
 	t := &templates.Templates{}
 
-	// Init with base templates
-	t.InitTemplates(m.tmpl)
+	// Directly initialize template fields
+	t.SetVerify(m.tmpl)
+	t.SetComplete(m.tmpl)
+	t.SetError(m.tmpl)
 
-	// Override render functions
-	t.RenderVerifyFunc = func(w http.ResponseWriter, data templates.VerifyData) error {
+	// Set mock functions for rendering
+	t.SetRenderVerifyFunc(func(w http.ResponseWriter, data templates.VerifyData) error {
 		return m.RenderVerify(w, data)
-	}
-	t.RenderErrorFunc = func(w http.ResponseWriter, data templates.ErrorData) error {
+	})
+	t.SetRenderErrorFunc(func(w http.ResponseWriter, data templates.ErrorData) error {
 		return m.RenderError(w, data)
-	}
-	t.RenderCompleteFunc = func(w http.ResponseWriter, data templates.CompleteData) error {
+	})
+	t.SetRenderCompleteFunc(func(w http.ResponseWriter, data templates.CompleteData) error {
 		return m.RenderComplete(w, data)
-	}
-	t.GenerateQRCodeFunc = func(uri string) (string, error) {
+	})
+	t.SetGenerateQRCodeFunc(func(uri string) (string, error) {
 		return m.GenerateQRCode(uri)
-	}
+	})
 
 	return t
 }
