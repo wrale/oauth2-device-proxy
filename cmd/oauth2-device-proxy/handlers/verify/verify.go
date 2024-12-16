@@ -69,7 +69,7 @@ func (h *Handler) renderError(w http.ResponseWriter, status int, title, message 
 
 // renderVerify handles verify form rendering per RFC 8628 section 3.3
 func (h *Handler) renderVerify(w http.ResponseWriter, data templates.VerifyData) {
-	// Verification form always returns 200 OK per RFC 8628
+	// Form display always returns 200 OK per RFC 8628 section 3.3
 	w.WriteHeader(http.StatusOK)
 	if err := h.templates.RenderVerify(w, data); err != nil {
 		log.Printf("Failed to render verify page: %v", err)
@@ -84,7 +84,7 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	// Generate CSRF token for security
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
-		// CSRF validation is input validation, use 400 Bad Request
+		// CSRF failures are input validation errors per RFC 8628
 		h.renderError(w, http.StatusBadRequest,
 			"Security Error",
 			"Unable to process request securely. Please try again.")
@@ -149,7 +149,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Verify code with device flow manager
 	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
-		// Keep existing CSRF token for retry
+		// Invalid codes show form again with 200 OK per RFC 8628 section 3.3
 		h.renderVerify(w, templates.VerifyData{
 			Error:     "Invalid or expired code. Please try again.",
 			CSRFToken: r.PostFormValue("csrf_token"),
@@ -167,7 +167,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		params.Set("scope", deviceCode.Scope)
 	}
 
-	// Redirect to authorization URL with 302 Found
+	// Redirect to authorization URL with 302 Found per RFC 8628
 	authURL := h.oauth.Endpoint.AuthURL + "?" + params.Encode()
 	w.Header().Set("Location", authURL)
 	w.WriteHeader(http.StatusFound)
