@@ -61,6 +61,7 @@ func (t *Templates) GenerateQRCode(verificationURI string) (string, error) {
 // This is a simplified implementation that handles alphanumeric data
 // per RFC 8628 verification_uri_complete requirements
 func generateQRMatrix(text string) ([][]bool, error) {
+	// RFC 8628 recommends keeping URIs short for QR codes
 	if len(text) > 90 { // Max length for Version 2 with ECC level L
 		return nil, fmt.Errorf("verification URI too long for QR version 2")
 	}
@@ -83,10 +84,10 @@ func generateQRMatrix(text string) ([][]bool, error) {
 		matrix[i][6] = i%2 == 0
 	}
 
-	// Add format info
+	// Add format info per QR code specification
 	addFormatInfo(matrix)
 
-	// Add data bits
+	// Add data bits with safe access checks
 	data, err := encodeData(text)
 	if err != nil {
 		return nil, fmt.Errorf("encoding data: %w", err)
@@ -101,22 +102,27 @@ func generateQRMatrix(text string) ([][]bool, error) {
 // addFinderPattern adds a finder pattern to the matrix at the given position
 func addFinderPattern(matrix [][]bool, top, left int) {
 	// Outer box
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 7 && top+i < qrSize && left+i < qrSize; i++ {
 		matrix[top][left+i] = true
 		matrix[top+6][left+i] = true
 		matrix[top+i][left] = true
 		matrix[top+i][left+6] = true
 	}
 	// Inner box
-	for i := 2; i < 5; i++ {
-		for j := 2; j < 5; j++ {
+	for i := 2; i < 5 && top+i < qrSize && left+i < qrSize; i++ {
+		for j := 2; j < 5 && top+j < qrSize && left+j < qrSize; j++ {
 			matrix[top+i][left+j] = true
 		}
 	}
 }
 
-// addAlignmentPattern adds an alignment pattern required for Version 2
+// addAlignmentPattern adds an alignment pattern with bounds checking
 func addAlignmentPattern(matrix [][]bool, top, left int) {
+	// Check bounds for entire 5x5 alignment pattern
+	if top+4 >= qrSize || left+4 >= qrSize {
+		return
+	}
+
 	// Add 5x5 alignment pattern
 	for i := 0; i < 5; i++ {
 		matrix[top][left+i] = true
@@ -134,14 +140,20 @@ func addFormatInfo(matrix [][]bool) {
 	format := []bool{true, false, true, false, true, false, false, true,
 		false, true, true, false, false, true, false}
 
-	// Add format bits around the top-left finder pattern
-	for i := 0; i < 6; i++ {
-		matrix[8][i] = format[i]
-		matrix[i][8] = format[14-i]
+	// Write format bits around the top-left finder pattern
+	for i := 0; i < 6 && i < qrSize; i++ {
+		if i < len(format) {
+			matrix[8][i] = format[i]
+		}
+		if 14-i < len(format) {
+			matrix[i][8] = format[14-i]
+		}
 	}
-	matrix[7][8] = format[6]
-	matrix[8][8] = format[7]
-	matrix[8][7] = format[8]
+	if 8 < qrSize {
+		matrix[7][8] = format[6]
+		matrix[8][8] = format[7]
+		matrix[8][7] = format[8]
+	}
 }
 
 // encodeData converts text into QR code bit stream for alphanumeric mode
@@ -219,26 +231,46 @@ func alphanumericValue(c byte) int {
 	}
 }
 
-// addData adds encoded data bits using mask pattern 0 per QR specification
+// addData adds encoded data bits to matrix using mask pattern 0
 func addData(matrix [][]bool, data []bool) error {
 	if len(data) == 0 {
 		return fmt.Errorf("no data to add")
 	}
 
-	// Starting position at bottom-right, moving upward
+	// Track available space
+	availableModules := 0
+	for y := 0; y < qrSize; y++ {
+		for x := 0; x < qrSize; x++ {
+			if !isReserved(matrix, x, y) {
+				availableModules++
+			}
+		}
+	}
+
+	if len(data) > availableModules {
+		return fmt.Errorf("data too large for QR code capacity")
+	}
+
+	// Starting position at bottom-right
 	x := qrSize - 1
 	y := qrSize - 1
 	up := true
 	dataIndex := 0
 
-	// Skip over the vertical timing pattern
-	if x == 6 {
-		x--
-	}
+	// Add data bits in a zigzag pattern with bounds checking
+	for dataIndex < len(data) {
+		// Skip over timing pattern
+		if x == 6 {
+			x--
+			continue
+		}
 
-	// Add data bits in a zig-zag pattern
-	for x >= 0 && dataIndex < len(data) {
-		// Check if we hit a reserved area
+		// Validate coordinates before access
+		if x < 0 || y < 0 || x >= qrSize || y >= qrSize {
+			break
+		}
+
+		// Check if we can place data at this position
 		if !isReserved(matrix, x, y) {
 			// Apply mask pattern 0 (even row+column sum)
 			bit := data[dataIndex]
@@ -249,37 +281,45 @@ func addData(matrix [][]bool, data []bool) error {
 			dataIndex++
 		}
 
-		// Move to next position
+		// Move to next position with bounds checking
 		if up {
 			if y > 0 {
 				y--
-				if x%2 == 0 {
+				if x%2 == 0 && x < qrSize-1 {
 					x++
-				} else {
+				} else if x%2 != 0 && x > 0 {
 					x--
 				}
 			} else {
-				x -= 2
-				up = false
+				if x > 1 { // Ensure we can move left by 2
+					x -= 2
+					up = false
+				} else {
+					break
+				}
 			}
 		} else {
 			if y < qrSize-1 {
 				y++
-				if x%2 == 0 {
+				if x%2 == 0 && x < qrSize-1 {
 					x++
-				} else {
+				} else if x%2 != 0 && x > 0 {
 					x--
 				}
 			} else {
-				x -= 2
-				up = true
+				if x > 1 { // Ensure we can move left by 2
+					x -= 2
+					up = true
+				} else {
+					break
+				}
 			}
 		}
+	}
 
-		// Skip over vertical timing pattern
-		if x == 6 {
-			x--
-		}
+	// Verify all data was added
+	if dataIndex < len(data) {
+		return fmt.Errorf("could not add all data to QR code")
 	}
 
 	return nil
@@ -287,7 +327,12 @@ func addData(matrix [][]bool, data []bool) error {
 
 // isReserved checks if a position in the matrix is reserved for format information
 func isReserved(matrix [][]bool, x, y int) bool {
-	// Check finder patterns
+	// Bounds check
+	if x < 0 || y < 0 || x >= qrSize || y >= qrSize {
+		return true
+	}
+
+	// Check finder patterns with safe bounds
 	if (y < 9 && x < 9) || // Top-left
 		(y < 9 && x > qrSize-9) || // Top-right
 		(y > qrSize-9 && x < 9) { // Bottom-left
