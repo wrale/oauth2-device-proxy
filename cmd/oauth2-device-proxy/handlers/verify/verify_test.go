@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 
@@ -63,22 +65,40 @@ func (m *mockFlow) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
+// mockCSRF provides CSRF token management for tests following RFC 8628
 type mockCSRF struct {
+	manager *csrf.Manager // Real manager to delegate to
+	mu      sync.RWMutex  // Thread safety for concurrent tests
+
+	// Mock function fields
 	generateToken func(ctx context.Context) (string, error)
 	validateToken func(ctx context.Context, token string) error
 }
 
-func (m *mockCSRF) GenerateToken(ctx context.Context) (string, error) {
-	if m.generateToken != nil {
-		return m.generateToken(ctx)
+// newMockCSRF creates a new mock CSRF manager with test defaults per RFC 8628
+func newMockCSRF() *mockCSRF {
+	return &mockCSRF{
+		manager: csrf.NewManager(&mockCSRFStore{}, []byte("test-secret"), time.Minute),
 	}
-	return "mock-csrf-token", nil
 }
 
-func (m *mockCSRF) ValidateToken(ctx context.Context, token string) error {
-	if m.validateToken != nil {
-		return m.validateToken(ctx, token)
-	}
+// ToManager returns the mock as a *csrf.Manager
+func (m *mockCSRF) ToManager() *csrf.Manager {
+	return m.manager
+}
+
+// mockCSRFStore implements csrf.Store interface for testing
+type mockCSRFStore struct{}
+
+func (s *mockCSRFStore) SaveToken(ctx context.Context, token string, expiresIn time.Duration) error {
+	return nil
+}
+
+func (s *mockCSRFStore) ValidateToken(ctx context.Context, token string) error {
+	return nil
+}
+
+func (s *mockCSRFStore) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
@@ -134,19 +154,18 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 					return nil
 				})
 
-			csrf := &mockCSRF{
-				generateToken: func(ctx context.Context) (string, error) {
-					if tt.csrfError != nil {
-						return "", tt.csrfError
-					}
-					return "test-token", nil
-				},
+			csrf := newMockCSRF()
+			csrf.generateToken = func(ctx context.Context) (string, error) {
+				if tt.csrfError != nil {
+					return "", tt.csrfError
+				}
+				return "test-token", nil
 			}
 
 			handler := New(Config{
 				Flow:      &mockFlow{},
-				Templates: tmpls.ToTemplates(), // Use ToTemplates() to get proper type
-				CSRF:      csrf,
+				Templates: tmpls.ToTemplates(),
+				CSRF:      csrf.ToManager(),
 				BaseURL:   "https://example.com",
 			})
 
@@ -227,16 +246,15 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var renderedVerify, renderedError bool
 
-			csrf := &mockCSRF{
-				validateToken: func(ctx context.Context, token string) error {
-					if tt.validateError != nil {
-						return tt.validateError
-					}
-					if token != tt.csrfToken {
-						return errors.New("invalid token")
-					}
-					return nil
-				},
+			csrf := newMockCSRF()
+			csrf.validateToken = func(ctx context.Context, token string) error {
+				if tt.validateError != nil {
+					return tt.validateError
+				}
+				if token != tt.csrfToken {
+					return errors.New("invalid token")
+				}
+				return nil
 			}
 
 			flow := &mockFlow{
@@ -260,8 +278,8 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 
 			handler := New(Config{
 				Flow:      flow,
-				Templates: tmpls.ToTemplates(), // Use ToTemplates() to get proper type
-				CSRF:      csrf,
+				Templates: tmpls.ToTemplates(),
+				CSRF:      csrf.ToManager(),
 				OAuth:     &oauth2.Config{},
 				BaseURL:   "https://example.com",
 			})
