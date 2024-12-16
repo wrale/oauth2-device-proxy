@@ -9,17 +9,17 @@ import (
 )
 
 // VerifyUserCode verifies a user code and checks rate limiting.
-// Error checking follows exact RFC 8628 section 3.5 order:
-// 1. Store errors take precedence (authorization server errors)
-// 2. Code validation and lookup
-// 3. Code expiration check
-// 4. Rate limiting check
+// Error order follows RFC 8628 section 3.5:
+// 1. Server errors (precedence over all others)
+// 2. Invalid/malformed code
+// 3. Expired code
+// 4. Rate limiting
 func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
-	// Run format validation first to catch obvious issues
+	// Run format validation first
 	if err := validation.ValidateUserCode(userCode); err != nil {
 		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
-			"Invalid user code format: must use BCDFGHJKLMNPQRSTVWXZ charset",
+			ErrorCodeInvalidGrant,
+			"The device_code is invalid or malformed",
 		)
 	}
 
@@ -29,17 +29,18 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 	// Check store errors first per RFC 8628
 	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
 	if err != nil {
+		// All store errors are server errors per RFC 8628
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Error validating code: internal error",
+			"Internal server error",
 		)
 	}
 
 	// Check code existence next
 	if code == nil {
 		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
-			"Invalid user code: code not found",
+			ErrorCodeInvalidGrant,
+			"The device_code is invalid or malformed",
 		)
 	}
 
@@ -47,7 +48,7 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 	if time.Now().After(code.ExpiresAt) {
 		return nil, NewDeviceFlowError(
 			ErrorCodeExpiredToken,
-			"Code has expired",
+			"The device_code has expired",
 		)
 	}
 
@@ -56,22 +57,22 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 	if err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Error validating code: internal error",
+			"Internal server error",
 		)
 	}
 
 	if pollCount >= f.maxPollsPerMin {
 		return nil, NewDeviceFlowError(
 			ErrorCodeSlowDown,
-			"Too many verification attempts, please wait",
+			"Polling too frequently",
 		)
 	}
 
-	// Update poll count even for verification attempts to enforce proper rate limiting
+	// Update poll count to enforce proper rate limiting
 	if err := f.store.IncrementPollCount(ctx, code.DeviceCode); err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Error validating code: internal error",
+			"Internal server error",
 		)
 	}
 
