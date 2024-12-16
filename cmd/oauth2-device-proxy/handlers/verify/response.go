@@ -25,11 +25,13 @@ func headerWritten(w http.ResponseWriter) bool {
 	return false
 }
 
-// writeResponse writes a response safely, logging any errors
+// writeResponse writes a response safely with proper status code per RFC 8628
 func (h *Handler) writeResponse(w http.ResponseWriter, status int, message string) {
+	// Always set status before writing per RFC 8628
 	if !headerWritten(w) {
 		w.WriteHeader(status)
 	}
+
 	if _, err := w.Write([]byte(message)); err != nil {
 		log.Printf("Failed to write response: %v", err)
 	}
@@ -37,17 +39,15 @@ func (h *Handler) writeResponse(w http.ResponseWriter, status int, message strin
 
 // renderError handles error page rendering with proper status code per RFC 8628
 func (h *Handler) renderError(w http.ResponseWriter, status int, title, message string) {
-	// Set error status before writing response
-	if !headerWritten(w) {
-		w.WriteHeader(status)
-	}
+	// Status must be set before any writing per RFC 8628
+	w.WriteHeader(status)
 
 	if err := h.templates.RenderError(w, templates.ErrorData{
 		Title:   title,
 		Message: message,
 	}); err != nil {
 		log.Printf("Failed to render error page: %v", err)
-		// Headers already sent, write plain text fallback
+		// Headers already sent, use plain text fallback
 		h.writeResponse(w, status, fmt.Sprintf("%s: %s", title, message))
 	}
 }
@@ -55,13 +55,12 @@ func (h *Handler) renderError(w http.ResponseWriter, status int, title, message 
 // renderVerify handles verify form rendering per RFC 8628 section 3.3
 func (h *Handler) renderVerify(w http.ResponseWriter, data templates.VerifyData) {
 	// Form display always returns 200 OK per RFC 8628 section 3.3
-	if !headerWritten(w) {
-		w.WriteHeader(http.StatusOK)
-	}
+	w.WriteHeader(http.StatusOK)
 
 	if err := h.templates.RenderVerify(w, data); err != nil {
 		log.Printf("Failed to render verify page: %v", err)
-		// Always show form on errors per RFC 8628
-		h.writeResponse(w, http.StatusOK, "Please enter your device code to continue.")
+		// Always show form on errors per RFC 8628 3.3
+		h.writeResponse(w, http.StatusOK,
+			"Please enter your device code to continue.")
 	}
 }

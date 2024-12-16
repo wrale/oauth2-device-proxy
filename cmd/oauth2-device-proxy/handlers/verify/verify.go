@@ -14,13 +14,14 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Parse form first to get input
 	if err := r.ParseForm(); err != nil {
+		// Client error (400) per RFC 8628 section 3.3
 		h.renderError(w, http.StatusBadRequest,
 			"Invalid Request",
 			"Unable to process form submission. Please try again.")
 		return
 	}
 
-	// CSRF validation is input validation - use 400 for invalid tokens per RFC 8628
+	// CSRF validation is input validation per RFC 8628 section 3.3
 	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
 		h.renderError(w, http.StatusBadRequest,
 			"Security Error",
@@ -28,7 +29,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get and validate user code presence - missing code is a client error
+	// Missing code is a client error per RFC 8628
 	code := r.PostFormValue("code")
 	if code == "" {
 		h.renderError(w, http.StatusBadRequest,
@@ -37,7 +38,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify code with device flow manager
+	// Verify the user code
 	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
 		// Show form again for invalid/expired codes per RFC 8628 section 3.3
@@ -49,7 +50,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build OAuth authorization URL per RFC 8628 section 3.3
+	// Build OAuth authorization URL per RFC 8628
 	params := url.Values{}
 	params.Set("response_type", "code")
 	params.Set("client_id", deviceCode.ClientID)
@@ -59,8 +60,10 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		params.Set("scope", deviceCode.Scope)
 	}
 
-	// Successful verification redirects with 302 Found per RFC 8628
+	// Set location header before status code
 	authURL := h.oauth.Endpoint.AuthURL + "?" + params.Encode()
 	w.Header().Set("Location", authURL)
+
+	// Successful verification returns 302 Found per RFC 8628 section 3.3
 	w.WriteHeader(http.StatusFound)
 }
