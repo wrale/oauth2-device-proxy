@@ -87,7 +87,7 @@ func TestCheckDeviceCode(t *testing.T) {
 					TokenType:   "Bearer",
 					ExpiresIn:   3600,
 				}
-				if err := s.SaveToken(context.Background(), "authorized", token); err != nil {
+				if err := s.SaveTokenResponse(context.Background(), "authorized", token); err != nil {
 					t.Fatalf("setup failed: %v", err)
 				}
 			},
@@ -236,7 +236,7 @@ func TestCompleteAuthorization(t *testing.T) {
 			}
 
 			// Verify token was saved
-			stored, err := store.GetToken(context.Background(), tt.deviceCode)
+			stored, err := store.GetTokenResponse(context.Background(), tt.deviceCode)
 			if err != nil {
 				t.Fatalf("error getting stored token: %v", err)
 			}
