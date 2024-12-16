@@ -82,41 +82,6 @@ func (m *mockCSRF) ValidateToken(ctx context.Context, token string) error {
 	return nil
 }
 
-type mockTemplates struct {
-	renderVerify   func(w http.ResponseWriter, data templates.VerifyData) error
-	renderError    func(w http.ResponseWriter, data templates.ErrorData) error
-	renderComplete func(w http.ResponseWriter, data templates.CompleteData) error
-	generateQRCode func(uri string) (string, error)
-}
-
-func (m *mockTemplates) RenderVerify(w http.ResponseWriter, data templates.VerifyData) error {
-	if m.renderVerify != nil {
-		return m.renderVerify(w, data)
-	}
-	return nil
-}
-
-func (m *mockTemplates) RenderError(w http.ResponseWriter, data templates.ErrorData) error {
-	if m.renderError != nil {
-		return m.renderError(w, data)
-	}
-	return nil
-}
-
-func (m *mockTemplates) RenderComplete(w http.ResponseWriter, data templates.CompleteData) error {
-	if m.renderComplete != nil {
-		return m.renderComplete(w, data)
-	}
-	return nil
-}
-
-func (m *mockTemplates) GenerateQRCode(uri string) (string, error) {
-	if m.generateQRCode != nil {
-		return m.generateQRCode(uri)
-	}
-	return "<svg>mock-qr-code</svg>", nil
-}
-
 func TestVerifyHandler_HandleForm(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -157,23 +122,16 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 			var renderedVerify, renderedError bool
 			var gotQRCode bool
 
-			tmpls := &mockTemplates{
-				renderVerify: func(w http.ResponseWriter, data templates.VerifyData) error {
+			tmpls := newMockTemplates().
+				WithRenderVerify(func(w http.ResponseWriter, data templates.VerifyData) error {
 					renderedVerify = true
 					gotQRCode = data.VerificationQRCodeSVG != ""
 					return nil
-				},
-				renderError: func(w http.ResponseWriter, data templates.ErrorData) error {
+				}).
+				WithRenderError(func(w http.ResponseWriter, data templates.ErrorData) error {
 					renderedError = true
 					return nil
-				},
-				generateQRCode: func(uri string) (string, error) {
-					if tt.qrError != nil {
-						return "", tt.qrError
-					}
-					return "<svg>test-qr</svg>", nil
-				},
-			}
+				})
 
 			csrf := &mockCSRF{
 				generateToken: func(ctx context.Context) (string, error) {
@@ -267,7 +225,6 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var renderedVerify, renderedError bool
-			var redirectURL string
 
 			csrf := &mockCSRF{
 				validateToken: func(ctx context.Context, token string) error {
@@ -290,16 +247,15 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 				},
 			}
 
-			tmpls := &mockTemplates{
-				renderVerify: func(w http.ResponseWriter, data templates.VerifyData) error {
+			tmpls := newMockTemplates().
+				WithRenderVerify(func(w http.ResponseWriter, data templates.VerifyData) error {
 					renderedVerify = true
 					return nil
-				},
-				renderError: func(w http.ResponseWriter, data templates.ErrorData) error {
+				}).
+				WithRenderError(func(w http.ResponseWriter, data templates.ErrorData) error {
 					renderedError = true
 					return nil
-				},
-			}
+				})
 
 			handler := New(Config{
 				Flow:      flow,
