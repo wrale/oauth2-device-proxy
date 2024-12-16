@@ -24,7 +24,8 @@ type server struct {
 	mux *chi.Mux
 }
 
-func newServer(cfg Config, flow *deviceflow.Flow, csrfManager *csrf.Manager) (*server, error) {
+// newServer creates a new HTTP server that implements RFC 8628 device authorization flows
+func newServer(cfg Config, flow deviceflow.Flow, csrfManager *csrf.Manager) (*server, error) {
 	// Load templates
 	tmpls, err := templates.LoadTemplates()
 	if err != nil {
