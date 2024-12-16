@@ -31,7 +31,7 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 	if err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Internal server error",
+			"Error validating code: internal error",
 		)
 	}
 
@@ -56,7 +56,7 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 	if err != nil {
 		return nil, NewDeviceFlowError(
 			ErrorCodeServerError,
-			"Internal server error",
+			"Error validating code: internal error",
 		)
 	}
 
@@ -64,6 +64,14 @@ func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*Device
 		return nil, NewDeviceFlowError(
 			ErrorCodeSlowDown,
 			"Too many verification attempts, please wait",
+		)
+	}
+
+	// Update poll count even for verification attempts to enforce proper rate limiting
+	if err := f.store.IncrementPollCount(ctx, code.DeviceCode); err != nil {
+		return nil, NewDeviceFlowError(
+			ErrorCodeServerError,
+			"Error validating code: internal error",
 		)
 	}
 

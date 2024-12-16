@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -120,7 +121,17 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 
 	// Prepare verification data with required URI per RFC 8628
-	verificationURI := h.baseURL + "/device"
+	baseURL, err := url.Parse(h.baseURL)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError,
+			"Configuration Error",
+			"Invalid service configuration. Please try again later.")
+		return
+	}
+
+	baseURL.Path = path.Join(baseURL.Path, "device")
+	verificationURI := baseURL.String()
+
 	data := templates.VerifyData{
 		PrefilledCode:   code,
 		CSRFToken:       token,
@@ -260,11 +271,13 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 
 // exchangeCode exchanges an authorization code for tokens
 func (h *Handler) exchangeCode(ctx context.Context, code string, deviceCode *deviceflow.DeviceCode) (*deviceflow.TokenResponse, error) {
+	// Exchange code using OAuth2 config
 	token, err := h.oauth.Exchange(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("exchanging code: %w", err)
+		return nil, fmt.Errorf("exchanging authorization code: %w", err)
 	}
 
+	// Convert oauth2.Token to deviceflow.TokenResponse per RFC 8628
 	return &deviceflow.TokenResponse{
 		AccessToken:  token.AccessToken,
 		TokenType:    token.TokenType,

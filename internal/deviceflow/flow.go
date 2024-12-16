@@ -109,7 +109,7 @@ func (f *flowImpl) RequestDeviceCode(ctx context.Context, clientID, scope string
 	// Build verification URIs
 	verificationURI, verificationURIComplete := f.buildVerificationURIs(userCode)
 
-	return &DeviceCode{
+	code := &DeviceCode{
 		DeviceCode:              deviceCode,
 		UserCode:                userCode,
 		VerificationURI:         verificationURI,
@@ -120,7 +120,17 @@ func (f *flowImpl) RequestDeviceCode(ctx context.Context, clientID, scope string
 		ClientID:                clientID,
 		Scope:                   scope,
 		LastPoll:                now,
-	}, nil
+	}
+
+	// Save the code first to handle storage errors
+	if err := f.store.SaveDeviceCode(ctx, code); err != nil {
+		return nil, NewDeviceFlowError(
+			ErrorCodeServerError,
+			"Failed to save device code",
+		)
+	}
+
+	return code, nil
 }
 
 // GetDeviceCode retrieves and validates a device code per RFC 8628.
@@ -129,17 +139,26 @@ func (f *flowImpl) GetDeviceCode(ctx context.Context, deviceCode string) (*Devic
 	// First check store errors - these take precedence
 	code, err := f.store.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return nil, err
+		return nil, NewDeviceFlowError(
+			ErrorCodeServerError,
+			"Internal server error",
+		)
 	}
 
 	// Check existence before other validations
 	if code == nil {
-		return nil, ErrInvalidDeviceCode
+		return nil, NewDeviceFlowError(
+			ErrorCodeInvalidRequest,
+			"Invalid device code: code not found",
+		)
 	}
 
 	// Check expiration using direct time comparison for precision
 	if time.Now().After(code.ExpiresAt) {
-		return nil, ErrExpiredCode
+		return nil, NewDeviceFlowError(
+			ErrorCodeExpiredToken,
+			"Code has expired",
+		)
 	}
 
 	// Update ExpiresIn based on remaining time
@@ -150,15 +169,19 @@ func (f *flowImpl) GetDeviceCode(ctx context.Context, deviceCode string) (*Devic
 
 // CheckDeviceCode validates device code and returns token if authorized
 func (f *flowImpl) CheckDeviceCode(ctx context.Context, deviceCode string) (*TokenResponse, error) {
+	// Get and validate device code - ensures consistent validation
 	code, err := f.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		return nil, err
+		return nil, err // Already wrapped in DeviceFlowError
 	}
 
 	// Get cached token response if it exists
 	token, err := f.store.GetTokenResponse(ctx, deviceCode)
 	if err != nil {
-		return nil, err
+		return nil, NewDeviceFlowError(
+			ErrorCodeServerError,
+			"Internal server error",
+		)
 	}
 
 	// If no token yet, check rate limiting
@@ -172,7 +195,10 @@ func (f *flowImpl) CheckDeviceCode(ctx context.Context, deviceCode string) (*Tok
 		if f.maxPollsPerMin > 0 {
 			count, err := f.store.GetPollCount(ctx, deviceCode, f.rateLimitWindow)
 			if err != nil {
-				return nil, err
+				return nil, NewDeviceFlowError(
+					ErrorCodeServerError,
+					"Failed to check rate limit",
+				)
 			}
 			if count >= f.maxPollsPerMin {
 				return nil, ErrSlowDown
@@ -181,10 +207,16 @@ func (f *flowImpl) CheckDeviceCode(ctx context.Context, deviceCode string) (*Tok
 
 		// Update poll timestamp and count
 		if err := f.store.UpdatePollTimestamp(ctx, deviceCode); err != nil {
-			return nil, err
+			return nil, NewDeviceFlowError(
+				ErrorCodeServerError,
+				"Failed to update poll timestamp",
+			)
 		}
 		if err := f.store.IncrementPollCount(ctx, deviceCode); err != nil {
-			return nil, err
+			return nil, NewDeviceFlowError(
+				ErrorCodeServerError,
+				"Failed to increment poll count",
+			)
 		}
 
 		// Return pending error
@@ -197,7 +229,21 @@ func (f *flowImpl) CheckDeviceCode(ctx context.Context, deviceCode string) (*Tok
 
 // CompleteAuthorization completes the flow with token response
 func (f *flowImpl) CompleteAuthorization(ctx context.Context, deviceCode string, token *TokenResponse) error {
-	return f.store.SaveTokenResponse(ctx, deviceCode, token)
+	// Get and validate device code first - ensures consistent validation
+	code, err := f.GetDeviceCode(ctx, deviceCode)
+	if err != nil {
+		return err // Already wrapped in DeviceFlowError
+	}
+
+	// Save the token response
+	if err := f.store.SaveTokenResponse(ctx, code.DeviceCode, token); err != nil {
+		return NewDeviceFlowError(
+			ErrorCodeServerError,
+			"Failed to save token response",
+		)
+	}
+
+	return nil
 }
 
 // CheckHealth verifies the storage backend is healthy
@@ -206,9 +252,6 @@ func (f *flowImpl) CheckHealth(ctx context.Context) error {
 }
 
 // buildVerificationURIs creates the verification URIs per RFC 8628 sections 3.2 and 3.3.1
-// It returns both the base verification URI and the complete URI that includes the user code:
-// - verification_uri: The base URI that users can visit to enter their code
-// - verification_uri_complete: Optional URI that includes the user code (e.g., for QR codes)
 func (f *flowImpl) buildVerificationURIs(userCode string) (string, string) {
 	// Parse the base URL to properly handle existing paths
 	baseURL, err := url.Parse(f.baseURL)
@@ -218,7 +261,14 @@ func (f *flowImpl) buildVerificationURIs(userCode string) (string, string) {
 
 	// Combine existing path with device endpoint
 	baseURL.Path = path.Join(baseURL.Path, "device")
+
+	// Normalize the verification URI
 	verificationURI := baseURL.String()
+
+	// Create verification URI with code
+	if userCode == "" {
+		return verificationURI, "" // No code, just return base URI
+	}
 
 	// Validate the user code
 	if err := validation.ValidateUserCode(userCode); err != nil {
