@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
@@ -20,15 +19,13 @@ type mockFlow struct {
 	verifyUserCode        func(ctx context.Context, code string) (*deviceflow.DeviceCode, error)
 	getDeviceCode         func(ctx context.Context, deviceCode string) (*deviceflow.DeviceCode, error)
 	completeAuthorization func(ctx context.Context, deviceCode string, token *deviceflow.TokenResponse) error
-	checkHealth           func(ctx context.Context) error
 }
 
-// Implement all Flow interface methods
 func (m *mockFlow) CheckDeviceCode(ctx context.Context, code string) (*deviceflow.TokenResponse, error) {
 	if m.checkDeviceCode != nil {
 		return m.checkDeviceCode(ctx, code)
 	}
-	return nil, nil
+	return nil, deviceflow.ErrPendingAuthorization // RFC 8628 section 3.5 default
 }
 
 func (m *mockFlow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*deviceflow.DeviceCode, error) {
@@ -60,9 +57,6 @@ func (m *mockFlow) CompleteAuthorization(ctx context.Context, deviceCode string,
 }
 
 func (m *mockFlow) CheckHealth(ctx context.Context) error {
-	if m.checkHealth != nil {
-		return m.checkHealth(ctx)
-	}
 	return nil
 }
 
@@ -210,7 +204,7 @@ func TestTokenHandler(t *testing.T) {
 				},
 			}
 
-			handler := New(flow)
+			handler := New(Config{Flow: flow})
 
 			// Build request
 			values := url.Values{}

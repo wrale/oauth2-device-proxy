@@ -11,13 +11,18 @@ import (
 
 // Handler processes device access token requests per RFC 8628 section 3.4
 type Handler struct {
-	flow *deviceflow.Flow
+	flow deviceflow.Flow // Changed from *deviceflow.Flow to deviceflow.Flow
+}
+
+// Config contains handler configuration options
+type Config struct {
+	Flow deviceflow.Flow // Added Config struct for consistency
 }
 
 // New creates a new token request handler
-func New(flow *deviceflow.Flow) *Handler {
+func New(cfg Config) *Handler {
 	return &Handler{
-		flow: flow,
+		flow: cfg.Flow,
 	}
 }
 
