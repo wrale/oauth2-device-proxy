@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"time"
@@ -43,8 +44,10 @@ func New(cfg Config) *Handler {
 
 // HandleForm shows the verification form
 func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	// Generate CSRF token
-	token, err := h.csrf.GenerateToken(r.Context())
+	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "System Error",
@@ -90,13 +93,15 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 
 // HandleSubmit processes the verification form submission
 func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 
 	// Verify CSRF token
-	if err := h.csrf.ValidateToken(r.Context(), r.PostFormValue("csrf_token")); err != nil {
+	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "Invalid Request",
 			Message: "Please try submitting the form again.",
@@ -108,7 +113,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Get and validate the user code
 	code := r.PostFormValue("code")
-	deviceCode, err := h.flow.VerifyUserCode(r.Context(), code)
+	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
 		data := templates.VerifyData{
 			Error:     "Invalid or expired code. Please try again.",
@@ -136,6 +141,8 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 // HandleComplete processes the OAuth callback and completes device authorization
 func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	deviceCode := r.URL.Query().Get("state")
 	if deviceCode == "" {
 		if err := h.templates.RenderError(w, templates.ErrorData{
@@ -159,7 +166,7 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load device code details to preserve scope
-	dCode, err := h.flow.GetDeviceCode(r.Context(), deviceCode)
+	dCode, err := h.flow.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "Authorization Failed",
@@ -171,7 +178,7 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Exchange code for token
-	token, err := h.exchangeCode(r.Context(), authCode, dCode)
+	token, err := h.exchangeCode(ctx, authCode, dCode)
 	if err != nil {
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "Authorization Failed",
@@ -183,7 +190,7 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Complete the device authorization
-	if err := h.flow.CompleteAuthorization(r.Context(), deviceCode, token); err != nil {
+	if err := h.flow.CompleteAuthorization(ctx, deviceCode, token); err != nil {
 		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "Authorization Failed",
 			Message: "Unable to complete device authorization",

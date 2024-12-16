@@ -8,19 +8,62 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
 
+// mockFlow implements the minimum required deviceflow.Flow interface for token testing
 type mockFlow struct {
-	checkDeviceCode func(ctx context.Context, code string) (*deviceflow.TokenResponse, error)
+	checkDeviceCode       func(ctx context.Context, code string) (*deviceflow.TokenResponse, error)
+	requestDeviceCode     func(ctx context.Context, clientID, scope string) (*deviceflow.DeviceCode, error)
+	verifyUserCode        func(ctx context.Context, code string) (*deviceflow.DeviceCode, error)
+	getDeviceCode         func(ctx context.Context, deviceCode string) (*deviceflow.DeviceCode, error)
+	completeAuthorization func(ctx context.Context, deviceCode string, token *deviceflow.TokenResponse) error
+	checkHealth           func(ctx context.Context) error
 }
 
+// Implement all Flow interface methods
 func (m *mockFlow) CheckDeviceCode(ctx context.Context, code string) (*deviceflow.TokenResponse, error) {
 	if m.checkDeviceCode != nil {
 		return m.checkDeviceCode(ctx, code)
 	}
 	return nil, nil
+}
+
+func (m *mockFlow) RequestDeviceCode(ctx context.Context, clientID, scope string) (*deviceflow.DeviceCode, error) {
+	if m.requestDeviceCode != nil {
+		return m.requestDeviceCode(ctx, clientID, scope)
+	}
+	return nil, nil
+}
+
+func (m *mockFlow) VerifyUserCode(ctx context.Context, code string) (*deviceflow.DeviceCode, error) {
+	if m.verifyUserCode != nil {
+		return m.verifyUserCode(ctx, code)
+	}
+	return nil, nil
+}
+
+func (m *mockFlow) GetDeviceCode(ctx context.Context, deviceCode string) (*deviceflow.DeviceCode, error) {
+	if m.getDeviceCode != nil {
+		return m.getDeviceCode(ctx, deviceCode)
+	}
+	return nil, nil
+}
+
+func (m *mockFlow) CompleteAuthorization(ctx context.Context, deviceCode string, token *deviceflow.TokenResponse) error {
+	if m.completeAuthorization != nil {
+		return m.completeAuthorization(ctx, deviceCode, token)
+	}
+	return nil
+}
+
+func (m *mockFlow) CheckHealth(ctx context.Context) error {
+	if m.checkHealth != nil {
+		return m.checkHealth(ctx)
+	}
+	return nil
 }
 
 func TestTokenHandler(t *testing.T) {
@@ -189,7 +232,7 @@ func TestTokenHandler(t *testing.T) {
 				t.Errorf("status code = %d, want %d", w.Code, tt.wantStatus)
 			}
 
-			// Check headers
+			// Check headers per RFC 8628
 			if w.Header().Get("Cache-Control") != "no-store" {
 				t.Error("missing Cache-Control: no-store header")
 			}
@@ -214,7 +257,7 @@ func TestTokenHandler(t *testing.T) {
 				return
 			}
 
-			// Validate successful response fields
+			// Validate successful response fields per RFC 8628 section 3.4
 			if tt.validateBody {
 				required := []string{
 					"access_token",
