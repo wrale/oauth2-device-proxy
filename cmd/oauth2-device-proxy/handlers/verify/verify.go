@@ -20,7 +20,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CSRF validation is input validation - use 400 for invalid tokens
+	// CSRF validation is input validation - use 400 for invalid tokens per RFC 8628
 	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
 		h.renderError(w, http.StatusBadRequest,
 			"Security Error",
@@ -28,10 +28,9 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get and validate user code presence
+	// Get and validate user code presence - missing code is a client error
 	code := r.PostFormValue("code")
 	if code == "" {
-		// Missing code is a client error
 		h.renderError(w, http.StatusBadRequest,
 			"Missing Code",
 			"Please enter the code shown on your device.")
@@ -43,8 +42,9 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Show form again for invalid/expired codes per RFC 8628 section 3.3
 		h.renderVerify(w, templates.VerifyData{
-			Error:     "The code you entered is invalid or has expired. Please check the code and try again.",
-			CSRFToken: r.PostFormValue("csrf_token"), // Maintain CSRF token
+			Error:         "The code you entered is invalid or has expired. Please check the code and try again.",
+			CSRFToken:     r.PostFormValue("csrf_token"), // Maintain CSRF token
+			PrefilledCode: code,                          // Keep code for user convenience
 		})
 		return
 	}
