@@ -1,3 +1,4 @@
+// Package verify provides verification flow handlers per RFC 8628 section 3.3
 package verify
 
 import (
@@ -109,6 +110,7 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 		wantStatusCode int
 		wantQRCode     bool
 		wantError      bool
+		wantFormRetry  bool
 	}{
 		{
 			name:           "success with code",
@@ -123,15 +125,15 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 		{
 			name:           "csrf error",
 			csrfError:      errors.New("csrf error"),
-			wantStatusCode: http.StatusInternalServerError,
+			wantStatusCode: http.StatusBadRequest, // Changed from 500 to 400 per RFC 8628
 			wantError:      true,
 		},
 		{
 			name:           "qr generation error",
 			code:           "USER-123",
 			qrError:        errors.New("qr error"),
-			wantStatusCode: http.StatusOK,
-			wantError:      true,
+			wantStatusCode: http.StatusOK, // Changed - QR failure is non-fatal per RFC 8628 3.3.1
+			wantFormRetry:  true,          // Show form without QR code
 		},
 	}
 
@@ -185,6 +187,10 @@ func TestVerifyHandler_HandleForm(t *testing.T) {
 				t.Error("expected error to be rendered")
 			}
 
+			if tt.wantFormRetry && !renderedVerify {
+				t.Error("expected verify form to be rendered for retry")
+			}
+
 			if !tt.wantError && !renderedVerify {
 				t.Error("expected verify form to be rendered")
 			}
@@ -207,6 +213,7 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 		wantStatusCode int
 		wantRedirect   bool
 		wantError      bool
+		wantFormRetry  bool
 	}{
 		{
 			name:           "successful verification",
@@ -235,14 +242,15 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 			code:           "INVALID-123",
 			csrfToken:      "valid-token",
 			verifyError:    deviceflow.ErrInvalidUserCode,
-			wantStatusCode: http.StatusOK,
-			wantError:      true,
+			wantStatusCode: http.StatusOK, // Changed to 200 per RFC 8628 3.3
+			wantFormRetry:  true,          // Show form again with error
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var renderedVerify, renderedError bool
+			var gotRedirect bool
 
 			csrf := newMockCSRF()
 			csrf.validateToken = func(ctx context.Context, token string) error {
@@ -307,15 +315,64 @@ func TestVerifyHandler_HandleSubmit(t *testing.T) {
 				if loc := w.Header().Get("Location"); loc == "" {
 					t.Error("missing Location header for redirect")
 				}
+				gotRedirect = true
 			}
 
 			if tt.wantError && !renderedError {
 				t.Error("expected error to be rendered")
 			}
 
+			if tt.wantFormRetry && !renderedVerify {
+				t.Error("expected verify form to be rendered for retry")
+			}
+
 			if !tt.wantError && !tt.wantRedirect && !renderedVerify {
-				t.Error("expected verify form to be rendered")
+				t.Error("expected verify form to be rendered for non-error cases")
+			}
+
+			if tt.wantRedirect && !gotRedirect {
+				t.Error("expected redirect but none occurred")
 			}
 		})
 	}
+}
+
+// mockTemplates provides a mock implementation of templates.Templates
+type mockTemplates struct {
+	renderVerify   func(w http.ResponseWriter, data templates.VerifyData) error
+	renderComplete func(w http.ResponseWriter, data templates.CompleteData) error
+	renderError    func(w http.ResponseWriter, data templates.ErrorData) error
+}
+
+func newMockTemplates() *mockTemplates {
+	return &mockTemplates{}
+}
+
+func (m *mockTemplates) WithRenderVerify(fn func(w http.ResponseWriter, data templates.VerifyData) error) *mockTemplates {
+	m.renderVerify = fn
+	return m
+}
+
+func (m *mockTemplates) WithRenderError(fn func(w http.ResponseWriter, data templates.ErrorData) error) *mockTemplates {
+	m.renderError = fn
+	return m
+}
+
+func (m *mockTemplates) WithRenderComplete(fn func(w http.ResponseWriter, data templates.CompleteData) error) *mockTemplates {
+	m.renderComplete = fn
+	return m
+}
+
+func (m *mockTemplates) ToTemplates() *templates.Templates {
+	t := &templates.Templates{}
+	if m.renderVerify != nil {
+		t.SetRenderVerifyFunc(m.renderVerify)
+	}
+	if m.renderComplete != nil {
+		t.SetRenderCompleteFunc(m.renderComplete)
+	}
+	if m.renderError != nil {
+		t.SetRenderErrorFunc(m.renderError)
+	}
+	return t
 }
