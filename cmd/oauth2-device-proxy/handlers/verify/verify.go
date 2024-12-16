@@ -45,6 +45,14 @@ func New(cfg Config) *Handler {
 	}
 }
 
+// writeResponse writes a response safely, logging any errors
+func (h *Handler) writeResponse(w http.ResponseWriter, status int, message string) {
+	w.WriteHeader(status)
+	if _, err := w.Write([]byte(message)); err != nil {
+		log.Printf("Failed to write response: %v", err)
+	}
+}
+
 // renderError handles error page rendering with proper status code
 func (h *Handler) renderError(w http.ResponseWriter, status int, title, message string) {
 	w.WriteHeader(status)
@@ -53,8 +61,8 @@ func (h *Handler) renderError(w http.ResponseWriter, status int, title, message 
 		Message: message,
 	}); err != nil {
 		log.Printf("Failed to render error page: %v", err)
-		// Since WriteHeader was already called, just write plain text
-		w.Write([]byte(message))
+		// Since WriteHeader was already called, write plain text with error checking
+		h.writeResponse(w, status, message)
 	}
 }
 
@@ -63,8 +71,8 @@ func (h *Handler) renderVerify(w http.ResponseWriter, status int, data templates
 	w.WriteHeader(status)
 	if err := h.templates.RenderVerify(w, data); err != nil {
 		log.Printf("Failed to render verify page: %v", err)
-		// Headers already sent, resort to plain text
-		w.Write([]byte("Verification form display error"))
+		// Headers already sent, write plain text with error checking
+		h.writeResponse(w, status, "Verification form display error")
 	}
 }
 
