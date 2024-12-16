@@ -62,7 +62,7 @@ func main() {
 	// Create HTTP server with proper timeout configurations
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           srv.router,
+		Handler:           srv.mux, // Update to use mux field per RFC 8628 endpoints
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
