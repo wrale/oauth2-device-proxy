@@ -23,36 +23,41 @@ type mockTemplates struct {
 
 	// Thread safety for concurrent tests
 	mu sync.RWMutex
+
+	// Mock templates instance for creating SafeWriters
+	templates templates.Templates
 }
 
 // newMockTemplates creates a new mock templates instance with default templates
 func newMockTemplates() *mockTemplates {
-	// Create initial template set for defaults that satisfy RFC 8628 section 3.3
-	tmpl := template.Must(template.New("mock").Parse(`
-{{define "layout"}}
-<!DOCTYPE html>
-<html><body>{{template "content" .}}</body></html>
-{{end}}
+	// Create base template with layout first
+	base := template.Must(template.New("layout").Parse(`<!DOCTYPE html><html><body>{{template "content" .}}</body></html>`))
 
-{{define "verify"}}
-{{define "title"}}Verify Device{{end}}
-{{define "content"}}{{printf "Verify: %+v" .}}{{end}}
-{{end}}
+	// Add verify template
+	template.Must(base.New("verify-title").Parse(`Verify Device`))
+	template.Must(base.New("verify-content").Parse(`Verify: {{printf "%+v" .}}`))
+	template.Must(base.New("verify").Parse(`{{template "layout" .}}`))
 
-{{define "error"}}
-{{define "title"}}Error{{end}}
-{{define "content"}}{{printf "Error: %+v" .}}{{end}}
-{{end}}
+	// Add error template
+	template.Must(base.New("error-title").Parse(`Error`))
+	template.Must(base.New("error-content").Parse(`Error: {{printf "%+v" .}}`))
+	template.Must(base.New("error").Parse(`{{template "layout" .}}`))
 
-{{define "complete"}}
-{{define "title"}}Complete{{end}}
-{{define "content"}}{{printf "Complete: %+v" .}}{{end}}
-{{end}}
-`))
+	// Add complete template
+	template.Must(base.New("complete-title").Parse(`Complete`))
+	template.Must(base.New("complete-content").Parse(`Complete: {{printf "%+v" .}}`))
+	template.Must(base.New("complete").Parse(`{{template "layout" .}}`))
 
-	return &mockTemplates{
-		tmpl: tmpl,
+	mock := &mockTemplates{
+		tmpl: base,
 	}
+
+	// Initialize templates for proper SafeWriter creation
+	mock.templates.SetVerify(base)
+	mock.templates.SetError(base)
+	mock.templates.SetComplete(base)
+
+	return mock
 }
 
 // ToTemplates returns this mock as a properly initialized *templates.Templates
@@ -163,13 +168,9 @@ func (m *mockTemplates) WithGenerateQRCode(fn func(uri string) (string, error)) 
 
 // defaultRender uses the pre-initialized templates to handle rendering
 func (m *mockTemplates) defaultRender(w http.ResponseWriter, name string, data interface{}) error {
-	// Create proper safe writer by reusing the exposed template functionality
-	sw := &templates.SafeWriter{
-		ResponseWriter: w,
-		Written:        false,
-		// Use default OK status since this is for tests
-		StatusCode: http.StatusOK,
-	}
+	// Create safe writer using proper NewSafeWriter constructor
+	sw := m.templates.NewSafeWriter(w)
+	sw.SetStatusCode(http.StatusOK) // Set default status for tests
 
 	// Set content type
 	sw.Header().Set("Content-Type", "text/html; charset=utf-8")
