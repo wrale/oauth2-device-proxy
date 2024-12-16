@@ -5,7 +5,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestRequestDeviceCode tests the primary RFC 8628 section 3.1-3.3 endpoint

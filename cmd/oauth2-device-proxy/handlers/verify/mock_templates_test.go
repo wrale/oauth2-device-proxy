@@ -7,10 +7,11 @@ import (
 	"github.com/wrale/oauth2-device-proxy/internal/templates"
 )
 
-// mockTemplates embeds templates.Templates and overrides methods for testing
+// mockTemplates embeds templates.Templates and overrides methods for testing.
+// All methods follow RFC 8628 section 3.3 for user interaction requirements.
 type mockTemplates struct {
-	// Embed real templates struct for interface compatibility
-	*templates.Templates
+	// Embed real templates struct to properly implement interface
+	templates.Templates
 
 	// Mock function fields
 	renderVerify   func(w http.ResponseWriter, data templates.VerifyData) error
@@ -23,10 +24,11 @@ type mockTemplates struct {
 
 // newMockTemplates creates a new mock templates instance
 func newMockTemplates() *mockTemplates {
+	// Required empty template set per section 3.3
 	return &mockTemplates{}
 }
 
-// Override RenderVerify for testing
+// RenderVerify renders verification page per RFC 8628 section 3.3
 func (m *mockTemplates) RenderVerify(w http.ResponseWriter, data templates.VerifyData) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -34,14 +36,10 @@ func (m *mockTemplates) RenderVerify(w http.ResponseWriter, data templates.Verif
 	if m.renderVerify != nil {
 		return m.renderVerify(w, data)
 	}
-	// Fall back to base Templates implementation if no mock defined
-	if m.Templates != nil {
-		return m.Templates.RenderVerify(w, data)
-	}
 	return nil
 }
 
-// Override RenderError for testing
+// RenderError renders error page per RFC 8628 section 3.3
 func (m *mockTemplates) RenderError(w http.ResponseWriter, data templates.ErrorData) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -49,24 +47,16 @@ func (m *mockTemplates) RenderError(w http.ResponseWriter, data templates.ErrorD
 	if m.renderError != nil {
 		return m.renderError(w, data)
 	}
-	// Fall back to base Templates implementation if no mock defined
-	if m.Templates != nil {
-		return m.Templates.RenderError(w, data)
-	}
 	return nil
 }
 
-// Override RenderComplete for testing
+// RenderComplete renders completion page per RFC 8628 section 3.3
 func (m *mockTemplates) RenderComplete(w http.ResponseWriter, data templates.CompleteData) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.renderComplete != nil {
 		return m.renderComplete(w, data)
-	}
-	// Fall back to base Templates implementation if no mock defined
-	if m.Templates != nil {
-		return m.Templates.RenderComplete(w, data)
 	}
 	return nil
 }
