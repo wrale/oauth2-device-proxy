@@ -215,7 +215,7 @@ type CompleteData struct {
 	Message string
 }
 
-// RenderComplete renders the completion page per RFC 8628 section 3.3
+// RenderComplete renders the completion page
 func (t *Templates) RenderComplete(w http.ResponseWriter, data CompleteData) error {
 	if t.RenderCompleteFunc != nil {
 		return t.RenderCompleteFunc(w, data)
@@ -244,7 +244,7 @@ type ErrorData struct {
 	Message string
 }
 
-// RenderError renders the error page per RFC 8628 section 3.3
+// RenderError renders the error page
 func (t *Templates) RenderError(w http.ResponseWriter, data ErrorData) error {
 	if t.RenderErrorFunc != nil {
 		return t.RenderErrorFunc(w, data)
@@ -325,14 +325,4 @@ func (t *Templates) RenderToString(tmpl *template.Template, data interface{}) (s
 		return "", fmt.Errorf("rendering template to string: %w", err)
 	}
 	return buf.String(), nil
-}
-
-// GenerateQRCode generates a QR code for verification_uri_complete per RFC 8628 section 3.3.1
-func (t *Templates) GenerateQRCode(uri string) (string, error) {
-	if t.GenerateQRCodeFunc != nil {
-		return t.GenerateQRCodeFunc(uri)
-	}
-
-	// Default empty implementation
-	return "", nil
 }
