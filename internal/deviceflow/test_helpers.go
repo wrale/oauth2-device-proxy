@@ -65,16 +65,18 @@ func (m *mockStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Devi
 		return nil, nil
 	}
 
-	// Return a copy to prevent mutation
+	// Return a copy to prevent mutation, only copying fields defined in models.DeviceCode
 	return &DeviceCode{
-		DeviceCode:    code.DeviceCode,
-		UserCode:      code.UserCode,
-		ClientID:      code.ClientID,
-		ExpiresAt:     code.ExpiresAt,
-		LastPoll:      code.LastPoll,
-		CreatedAt:     code.CreatedAt,
-		Scope:         code.Scope,
-		CodeChallenge: code.CodeChallenge,
+		DeviceCode:              code.DeviceCode,
+		UserCode:                code.UserCode,
+		VerificationURI:         code.VerificationURI,
+		VerificationURIComplete: code.VerificationURIComplete,
+		ExpiresIn:               code.ExpiresIn,
+		Interval:                code.Interval,
+		ExpiresAt:               code.ExpiresAt,
+		ClientID:                code.ClientID,
+		Scope:                   code.Scope,
+		LastPoll:                code.LastPoll,
 	}, nil
 }
 
@@ -95,16 +97,18 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 		return nil, nil
 	}
 
-	// Return a copy to prevent mutation
+	// Return a copy to prevent mutation, only copying fields defined in models.DeviceCode
 	return &DeviceCode{
-		DeviceCode:    code.DeviceCode,
-		UserCode:      code.UserCode,
-		ClientID:      code.ClientID,
-		ExpiresAt:     code.ExpiresAt,
-		LastPoll:      code.LastPoll,
-		CreatedAt:     code.CreatedAt,
-		Scope:         code.Scope,
-		CodeChallenge: code.CodeChallenge,
+		DeviceCode:              code.DeviceCode,
+		UserCode:                code.UserCode,
+		VerificationURI:         code.VerificationURI,
+		VerificationURIComplete: code.VerificationURIComplete,
+		ExpiresIn:               code.ExpiresIn,
+		Interval:                code.Interval,
+		ExpiresAt:               code.ExpiresAt,
+		ClientID:                code.ClientID,
+		Scope:                   code.Scope,
+		LastPoll:                code.LastPoll,
 	}, nil
 }
 
