@@ -9,7 +9,7 @@ import (
 
 // Handler processes health check requests
 type Handler struct {
-	flow *deviceflow.Flow
+	flow deviceflow.Flow // Changed from *deviceflow.Flow to deviceflow.Flow
 }
 
 // Response represents the health check response
@@ -19,7 +19,7 @@ type Response struct {
 }
 
 // New creates a new health check handler
-func New(flow *deviceflow.Flow) *Handler {
+func New(flow deviceflow.Flow) *Handler { // Changed parameter type
 	return &Handler{
 		flow: flow,
 	}
