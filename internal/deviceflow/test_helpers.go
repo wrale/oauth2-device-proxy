@@ -43,6 +43,11 @@ func (m *mockStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Override user code for testing if mock code is set
+	if m.mockUserCode != "" {
+		code.UserCode = m.mockUserCode
+	}
+
 	m.deviceCodes[code.DeviceCode] = code
 	m.userCodes[validation.NormalizeCode(code.UserCode)] = code.DeviceCode
 	return nil
@@ -59,7 +64,18 @@ func (m *mockStore) GetDeviceCode(ctx context.Context, deviceCode string) (*Devi
 	if !exists {
 		return nil, nil
 	}
-	return code, nil
+
+	// Return a copy to prevent mutation
+	return &DeviceCode{
+		DeviceCode:    code.DeviceCode,
+		UserCode:      code.UserCode,
+		ClientID:      code.ClientID,
+		ExpiresAt:     code.ExpiresAt,
+		LastPoll:      code.LastPoll,
+		CreatedAt:     code.CreatedAt,
+		Scope:         code.Scope,
+		CodeChallenge: code.CodeChallenge,
+	}, nil
 }
 
 func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
@@ -69,20 +85,27 @@ func (m *mockStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Return fixed user code if set for testing
-	if m.mockUserCode != "" {
-		return &DeviceCode{UserCode: m.mockUserCode}, nil
-	}
-
 	deviceCode, exists := m.userCodes[validation.NormalizeCode(userCode)]
 	if !exists {
 		return nil, nil
 	}
+
 	code, exists := m.deviceCodes[deviceCode]
 	if !exists {
 		return nil, nil
 	}
-	return code, nil
+
+	// Return a copy to prevent mutation
+	return &DeviceCode{
+		DeviceCode:    code.DeviceCode,
+		UserCode:      code.UserCode,
+		ClientID:      code.ClientID,
+		ExpiresAt:     code.ExpiresAt,
+		LastPoll:      code.LastPoll,
+		CreatedAt:     code.CreatedAt,
+		Scope:         code.Scope,
+		CodeChallenge: code.CodeChallenge,
+	}, nil
 }
 
 func (m *mockStore) GetTokenResponse(ctx context.Context, deviceCode string) (*TokenResponse, error) {
@@ -96,7 +119,15 @@ func (m *mockStore) GetTokenResponse(ctx context.Context, deviceCode string) (*T
 	if !exists {
 		return nil, nil
 	}
-	return token, nil
+
+	// Return a copy to prevent mutation
+	return &TokenResponse{
+		AccessToken:  token.AccessToken,
+		TokenType:    token.TokenType,
+		ExpiresIn:    token.ExpiresIn,
+		RefreshToken: token.RefreshToken,
+		Scope:        token.Scope,
+	}, nil
 }
 
 func (m *mockStore) SaveTokenResponse(ctx context.Context, deviceCode string, token *TokenResponse) error {
@@ -106,7 +137,14 @@ func (m *mockStore) SaveTokenResponse(ctx context.Context, deviceCode string, to
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.tokens[deviceCode] = token
+	// Save a copy to prevent mutation
+	m.tokens[deviceCode] = &TokenResponse{
+		AccessToken:  token.AccessToken,
+		TokenType:    token.TokenType,
+		ExpiresIn:    token.ExpiresIn,
+		RefreshToken: token.RefreshToken,
+		Scope:        token.Scope,
+	}
 	return nil
 }
 
