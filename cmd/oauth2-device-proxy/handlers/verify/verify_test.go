@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -68,7 +67,6 @@ func (m *mockFlow) CheckHealth(ctx context.Context) error {
 // mockCSRF provides CSRF token management for tests following RFC 8628
 type mockCSRF struct {
 	manager *csrf.Manager // Real manager to delegate to
-	mu      sync.RWMutex  // Thread safety for concurrent tests
 
 	// Mock function fields
 	generateToken func(ctx context.Context) (string, error)
