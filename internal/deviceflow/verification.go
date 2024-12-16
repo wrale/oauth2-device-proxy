@@ -14,7 +14,7 @@ import (
 // 2. Code existence and state (authorization pending, expired)
 // 3. Rate limiting (slow_down)
 // 4. Code format validation
-func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
+func (f *flowImpl) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
 	// Normalize for lookup - validation comes later
 	normalized := validation.NormalizeCode(userCode)
 
@@ -22,7 +22,7 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 	code, err := f.store.GetDeviceCodeByUserCode(ctx, normalized)
 	if err != nil {
 		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
+			ErrorCodeServerError,
 			"Error validating code: internal error",
 		)
 	}
@@ -51,14 +51,14 @@ func (f *Flow) VerifyUserCode(ctx context.Context, userCode string) (*DeviceCode
 	}
 
 	// Rate limiting check per RFC 8628 section 5.2
-	allowed, err := f.store.CheckDeviceCodeAttempts(ctx, code.DeviceCode)
+	pollCount, err := f.store.GetPollCount(ctx, code.DeviceCode, f.rateLimitWindow)
 	if err != nil {
 		return nil, NewDeviceFlowError(
-			ErrorCodeInvalidRequest,
+			ErrorCodeServerError,
 			"Error checking rate limit: internal error",
 		)
 	}
-	if !allowed {
+	if pollCount >= f.maxPollsPerMin {
 		return nil, NewDeviceFlowError(
 			ErrorCodeSlowDown,
 			"Too many verification attempts, please wait",
