@@ -3,6 +3,7 @@ package deviceflow
 
 import (
 	"context"
+	"time"
 )
 
 // Store defines the interface for device flow storage
@@ -16,18 +17,23 @@ type Store interface {
 	// GetDeviceCodeByUserCode retrieves a device code by its user code
 	GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error)
 
-	// SaveToken stores an access token for a device code
-	SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error
+	// GetTokenResponse retrieves token response for a device code
+	GetTokenResponse(ctx context.Context, deviceCode string) (*TokenResponse, error)
 
-	// GetToken retrieves a stored token for a device code
-	GetToken(ctx context.Context, deviceCode string) (*TokenResponse, error)
+	// SaveTokenResponse stores token response for a device code
+	SaveTokenResponse(ctx context.Context, deviceCode string, token *TokenResponse) error
 
 	// DeleteDeviceCode removes a device code and its associated data
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
 
-	// CheckDeviceCodeAttempts checks rate limiting for device code verification
-	// Returns (true, nil) if the attempt is allowed, or (false, error) if rate limited
-	CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error)
+	// GetPollCount gets the number of polls in the given window
+	GetPollCount(ctx context.Context, deviceCode string, window time.Duration) (int, error)
+
+	// UpdatePollTimestamp updates the last poll timestamp for rate limiting
+	UpdatePollTimestamp(ctx context.Context, deviceCode string) error
+
+	// IncrementPollCount increments the poll counter for rate limiting
+	IncrementPollCount(ctx context.Context, deviceCode string) error
 
 	// CheckHealth verifies the storage backend is healthy
 	CheckHealth(ctx context.Context) error
