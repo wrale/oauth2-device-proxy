@@ -3,6 +3,8 @@ package verify
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -43,6 +45,24 @@ func New(cfg Config) *Handler {
 	}
 }
 
+// logTemplateError logs a template rendering error and optionally falls back to plain text
+func (h *Handler) logTemplateError(err error, operation string) {
+	log.Printf("Template error during %s: %v", operation, err)
+}
+
+// handleRenderError handles template rendering errors with proper fallbacks
+func (h *Handler) handleRenderError(w http.ResponseWriter, err error, fallbackStatus int, fallbackMsg string) {
+	// If headers haven't been written yet, try to render error page
+	if err := h.templates.RenderError(w, templates.ErrorData{
+		Title:   "Error",
+		Message: fallbackMsg,
+	}); err != nil {
+		// If error page fails, fall back to plain text
+		h.logTemplateError(err, "error page fallback")
+		http.Error(w, fallbackMsg, fallbackStatus)
+	}
+}
+
 // HandleForm shows the verification form per RFC 8628 section 3.3
 func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -50,12 +70,14 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	// Generate CSRF token
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
-		// Server errors set 500 status before writing error page
 		w.WriteHeader(http.StatusInternalServerError)
-		h.templates.RenderError(w, templates.ErrorData{
+		if err := h.templates.RenderError(w, templates.ErrorData{
 			Title:   "Server Error",
 			Message: "Unable to process request. Please try again.",
-		})
+		}); err != nil {
+			h.logTemplateError(err, "CSRF error")
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -74,16 +96,18 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		completeURI := verificationURI + "?code=" + url.QueryEscape(code)
 		if qrCode, err := h.templates.GenerateQRCode(completeURI); err == nil {
 			data.VerificationQRCodeSVG = qrCode
+		} else {
+			// QR code failures are non-fatal per RFC 8628 3.3.1
+			// Log warning but continue without QR code
+			log.Printf("Warning: QR code generation failed: %v", err)
 		}
-		// QR code failures are non-fatal per RFC 8628 3.3.1
-		// Continue without QR code on error
 	}
 
-	// Set 200 OK status before writing response
+	// Set 200 OK status and render verification form
 	w.WriteHeader(http.StatusOK)
 	if err := h.templates.RenderVerify(w, data); err != nil {
-		// Response already started - can only log at this point
-		// Log error but don't try to write error response
+		h.logTemplateError(err, "verification form")
+		// Headers already sent, cannot write error response
 		return
 	}
 }
@@ -94,20 +118,14 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "Unable to process form submission",
-		})
+		h.handleRenderError(w, err, http.StatusBadRequest, "Unable to process form submission")
 		return
 	}
 
 	// Verify CSRF token
 	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "Please try submitting the form again.",
-		})
+		h.handleRenderError(w, err, http.StatusBadRequest, "Invalid request. Please try again.")
 		return
 	}
 
@@ -115,10 +133,7 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	code := r.PostFormValue("code")
 	if code == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "No device code was entered",
-		})
+		h.handleRenderError(w, fmt.Errorf("missing code"), http.StatusBadRequest, "No device code was entered")
 		return
 	}
 
@@ -126,10 +141,13 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
 		w.WriteHeader(http.StatusOK) // Show form again with error
-		h.templates.RenderVerify(w, templates.VerifyData{
+		if err := h.templates.RenderVerify(w, templates.VerifyData{
 			Error:     "Invalid or expired code. Please try again.",
 			CSRFToken: r.PostFormValue("csrf_token"),
-		})
+		}); err != nil {
+			h.logTemplateError(err, "verification form with error")
+			h.handleRenderError(w, err, http.StatusBadRequest, "Invalid code. Please try again.")
+		}
 		return
 	}
 
@@ -156,20 +174,14 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.URL.Query().Get("state")
 	if deviceCode == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "Missing or invalid state parameter",
-		})
+		h.handleRenderError(w, fmt.Errorf("missing state"), http.StatusBadRequest, "Missing or invalid state parameter")
 		return
 	}
 
 	authCode := r.URL.Query().Get("code")
 	if authCode == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Authorization Failed",
-			Message: "No authorization code received",
-		})
+		h.handleRenderError(w, fmt.Errorf("missing code"), http.StatusBadRequest, "No authorization code received")
 		return
 	}
 
@@ -177,10 +189,7 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	dCode, err := h.flow.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Authorization Failed",
-			Message: "Device code verification failed",
-		})
+		h.handleRenderError(w, err, http.StatusBadRequest, "Device code verification failed")
 		return
 	}
 
@@ -188,20 +197,14 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	token, err := h.exchangeCode(ctx, authCode, dCode)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Authorization Failed",
-			Message: "Unable to complete authorization",
-		})
+		h.handleRenderError(w, err, http.StatusBadRequest, "Unable to complete authorization")
 		return
 	}
 
 	// Complete device authorization
 	if err := h.flow.CompleteAuthorization(ctx, deviceCode, token); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Authorization Failed",
-			Message: "Unable to complete device authorization",
-		})
+		h.handleRenderError(w, err, http.StatusInternalServerError, "Unable to complete device authorization")
 		return
 	}
 
@@ -210,7 +213,9 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	if err := h.templates.RenderComplete(w, templates.CompleteData{
 		Message: "You have successfully authorized the device. You may now close this window.",
 	}); err != nil {
-		return // Response already started - can only log error
+		h.logTemplateError(err, "completion page")
+		// Headers already sent, cannot write error response
+		return
 	}
 }
 
@@ -218,7 +223,7 @@ func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) exchangeCode(ctx context.Context, code string, deviceCode *deviceflow.DeviceCode) (*deviceflow.TokenResponse, error) {
 	token, err := h.oauth.Exchange(ctx, code)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("exchanging code: %w", err)
 	}
 
 	return &deviceflow.TokenResponse{
