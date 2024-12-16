@@ -17,7 +17,7 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	// Generate CSRF token for security
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
-		// CSRF failures are input validation errors per RFC 8628
+		// CSRF failures return 400 Bad Request per RFC 8628
 		w.WriteHeader(http.StatusBadRequest)
 		h.renderError(w, http.StatusBadRequest,
 			"Security Error",
@@ -36,6 +36,9 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 			"Invalid service configuration. Please try again later.")
 		return
 	}
+
+	// Set 200 OK status now for successful form display per RFC 8628 section 3.3
+	w.WriteHeader(http.StatusOK)
 
 	baseURL.Path = path.Join(baseURL.Path, "device")
 	verificationURI := baseURL.String()
@@ -58,11 +61,6 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Always return 200 OK for form display per RFC 8628 section 3.3
-	w.WriteHeader(http.StatusOK)
-	if err := h.templates.RenderVerify(w, data); err != nil {
-		// Template errors after header sent - use plain text fallback
-		log.Printf("Failed to render verify page: %v", err)
-		h.writeResponse(w, http.StatusOK, "Please enter your device code to continue.")
-	}
+	// Render form - errors are already logged in template renderer
+	h.renderVerify(w, data)
 }
