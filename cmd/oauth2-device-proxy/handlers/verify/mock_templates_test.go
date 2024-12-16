@@ -3,7 +3,6 @@ package verify
 
 import (
 	"bytes"
-	"fmt"
 	"html/template"
 	"io"
 	"net/http"
