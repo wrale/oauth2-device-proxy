@@ -18,6 +18,7 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
 		// CSRF failures are input validation errors per RFC 8628
+		w.WriteHeader(http.StatusBadRequest)
 		h.renderError(w, http.StatusBadRequest,
 			"Security Error",
 			"Unable to process request securely. Please try again in a moment.")
@@ -45,17 +46,23 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		VerificationURI: verificationURI,
 	}
 
-	// Try QR code generation if code provided (non-fatal per RFC 8628 section 3.3.1)
+	// Generate QR code if possible (non-fatal per RFC 8628 section 3.3.1)
 	if code != "" {
 		completeURI := verificationURI + "?code=" + url.QueryEscape(code)
-		if qrCode, err := h.templates.GenerateQRCode(completeURI); err != nil {
-			// Log warning only - QR code is optional enhancement
+		qrCode, err := h.templates.GenerateQRCode(completeURI)
+		if err != nil {
+			// Just log warning - QR code is optional enhancement
 			log.Printf("Warning: QR code generation failed: %v", err)
 		} else {
 			data.VerificationQRCodeSVG = qrCode
 		}
 	}
 
-	// Always show form with 200 OK per RFC 8628 section 3.3
-	h.renderVerify(w, data)
+	// Always return 200 OK for form display per RFC 8628 section 3.3
+	w.WriteHeader(http.StatusOK)
+	if err := h.templates.RenderVerify(w, data); err != nil {
+		// Template errors after header sent - use plain text fallback
+		log.Printf("Failed to render verify page: %v", err)
+		h.writeResponse(w, http.StatusOK, "Please enter your device code to continue.")
+	}
 }
