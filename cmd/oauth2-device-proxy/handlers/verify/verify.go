@@ -45,22 +45,39 @@ func New(cfg Config) *Handler {
 	}
 }
 
+// renderError handles error page rendering with proper status code
+func (h *Handler) renderError(w http.ResponseWriter, status int, title, message string) {
+	w.WriteHeader(status)
+	if err := h.templates.RenderError(w, templates.ErrorData{
+		Title:   title,
+		Message: message,
+	}); err != nil {
+		log.Printf("Failed to render error page: %v", err)
+		// Since WriteHeader was already called, just write plain text
+		w.Write([]byte(message))
+	}
+}
+
+// renderVerify handles verify form rendering with proper status code
+func (h *Handler) renderVerify(w http.ResponseWriter, status int, data templates.VerifyData) {
+	w.WriteHeader(status)
+	if err := h.templates.RenderVerify(w, data); err != nil {
+		log.Printf("Failed to render verify page: %v", err)
+		// Headers already sent, resort to plain text
+		w.Write([]byte("Verification form display error"))
+	}
+}
+
 // HandleForm shows the verification form per RFC 8628 section 3.3
 func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Generate CSRF token first - failure is critical
+	// Generate CSRF token first - failure is critical security issue per RFC 8628
 	token, err := h.csrf.GenerateToken(ctx)
 	if err != nil {
-		// Set status before writing error response
-		w.WriteHeader(http.StatusInternalServerError)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Server Error",
-			Message: "Unable to process request. Please try again.",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
+		h.renderError(w, http.StatusInternalServerError,
+			"Security Error",
+			"Unable to process request securely. Please try again.")
 		return
 	}
 
@@ -75,7 +92,8 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		VerificationURI: verificationURI,
 	}
 
-	// Generate QR code if code provided, but QR failures are non-fatal per RFC 8628 3.3.1
+	// Generate QR code if code provided
+	// QR failures are non-fatal per RFC 8628 section 3.3.1
 	if code != "" {
 		completeURI := verificationURI + "?code=" + url.QueryEscape(code)
 		if qrCode, err := h.templates.GenerateQRCode(completeURI); err != nil {
@@ -86,13 +104,8 @@ func (h *Handler) HandleForm(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Set status before writing response
-	w.WriteHeader(http.StatusOK)
-	if err := h.templates.RenderVerify(w, data); err != nil {
-		log.Printf("Failed to render verification form: %v", err)
-		// Headers already sent, cannot render error page
-		return
-	}
+	// Render verification form with 200 OK per RFC 8628 section 3.3
+	h.renderVerify(w, http.StatusOK, data)
 }
 
 // HandleSubmit processes the verification form submission per RFC 8628 section 3.3
@@ -101,62 +114,37 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Parse form first
 	if err := r.ParseForm(); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		if rErr := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Bad Request",
-			Message: "Unable to process form submission",
-		}); rErr != nil {
-			log.Printf("Failed to render error page: %v", rErr)
-			http.Error(w, "Bad request", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusBadRequest,
+			"Invalid Request",
+			"Unable to process form submission")
 		return
 	}
 
-	// CSRF validation is a critical security check - treat failures as server errors
+	// CSRF validation is security check - per RFC 8628 it fails securely
 	if err := h.csrf.ValidateToken(ctx, r.PostFormValue("csrf_token")); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		if rErr := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Security Error",
-			Message: "Invalid security token. Please try again.",
-		}); rErr != nil {
-			log.Printf("Failed to render error page: %v", rErr)
-			http.Error(w, "Security error", http.StatusInternalServerError)
-		}
+		h.renderError(w, http.StatusInternalServerError,
+			"Security Error",
+			"Invalid security token. Please try again.")
 		return
 	}
 
 	// Get and validate user code
 	code := r.PostFormValue("code")
 	if code == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Missing Code",
-			Message: "No device code was entered",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Missing code", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusBadRequest,
+			"Missing Code",
+			"No device code was entered")
 		return
 	}
 
 	// Verify code with device flow manager
 	deviceCode, err := h.flow.VerifyUserCode(ctx, code)
 	if err != nil {
-		// Show form again with error but preserve CSRF token
-		if err := h.templates.RenderVerify(w, templates.VerifyData{
+		// Invalid codes show form again with error and 200 OK per RFC 8628
+		h.renderVerify(w, http.StatusOK, templates.VerifyData{
 			Error:     "Invalid or expired code. Please try again.",
 			CSRFToken: r.PostFormValue("csrf_token"),
-		}); err != nil {
-			log.Printf("Failed to render verification form with error: %v", err)
-			// Fallback to error page since form failed
-			if rErr := h.templates.RenderError(w, templates.ErrorData{
-				Title:   "Error",
-				Message: "Invalid code. Please try again.",
-			}); rErr != nil {
-				log.Printf("Failed to render error page: %v", rErr)
-				http.Error(w, "Invalid code", http.StatusBadRequest)
-			}
-		}
+		})
 		return
 	}
 
@@ -165,14 +153,14 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	params.Set("response_type", "code")
 	params.Set("client_id", deviceCode.ClientID)
 	params.Set("redirect_uri", h.baseURL+"/device/complete")
-	params.Set("state", deviceCode.DeviceCode)
+	params.Set("state", deviceCode.DeviceCode) // Use device code as state per RFC 8628
 	if deviceCode.Scope != "" {
 		params.Set("scope", deviceCode.Scope)
 	}
 
-	// Redirect to authorization URL - set header first per HTTP spec
-	location := h.oauth.Endpoint.AuthURL + "?" + params.Encode()
-	w.Header().Set("Location", location)
+	// Redirect to authorization URL with 302 Found per RFC 8628 section 3.3
+	authURL := h.oauth.Endpoint.AuthURL + "?" + params.Encode()
+	w.Header().Set("Location", authURL)
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -180,82 +168,59 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleComplete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Verify state first to prevent CSRF
+	// Verify state matches device code per RFC 8628
 	deviceCode := r.URL.Query().Get("state")
 	if deviceCode == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "Missing or invalid state parameter",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Invalid state", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusBadRequest,
+			"Invalid Request",
+			"Missing state parameter")
 		return
 	}
 
 	// Verify auth code presence
 	authCode := r.URL.Query().Get("code")
 	if authCode == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "No authorization code received",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Missing code", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusBadRequest,
+			"Invalid Request",
+			"No authorization code received")
 		return
 	}
 
 	// Load device code details
 	dCode, err := h.flow.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Invalid Request",
-			Message: "Device code verification failed",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Invalid device code", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusBadRequest,
+			"Invalid Request",
+			"Device code verification failed")
 		return
 	}
 
 	// Exchange code for token
 	token, err := h.exchangeCode(ctx, authCode, dCode)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Authorization Failed",
-			Message: "Unable to complete authorization",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Authorization failed", http.StatusBadRequest)
-		}
+		h.renderError(w, http.StatusInternalServerError,
+			"Authorization Failed",
+			"Unable to complete authorization")
 		return
 	}
 
 	// Complete device authorization
 	if err := h.flow.CompleteAuthorization(ctx, deviceCode, token); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		if err := h.templates.RenderError(w, templates.ErrorData{
-			Title:   "Server Error",
-			Message: "Unable to complete device authorization",
-		}); err != nil {
-			log.Printf("Failed to render error page: %v", err)
-			http.Error(w, "Server error", http.StatusInternalServerError)
-		}
+		h.renderError(w, http.StatusInternalServerError,
+			"Server Error",
+			"Unable to complete device authorization")
 		return
 	}
 
-	// Show success page per RFC 8628 section 3.3
-	w.WriteHeader(http.StatusOK)
+	// Show success page with 200 OK per RFC 8628
 	if err := h.templates.RenderComplete(w, templates.CompleteData{
 		Message: "You have successfully authorized the device. You may now close this window.",
 	}); err != nil {
 		log.Printf("Failed to render completion page: %v", err)
-		// Headers already sent, cannot render error page
+		// Since headers not sent yet, we can still show error
+		h.renderError(w, http.StatusInternalServerError,
+			"Display Error",
+			"Successfully authorized but unable to show completion page")
 		return
 	}
 }
