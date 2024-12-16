@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,6 +18,7 @@ const (
 	userPrefix      = "user:"
 	tokenPrefix     = "token:"
 	ratePrefix      = "rate:"
+	pollPrefix      = "poll:"
 	maxAttempts     = 50  // Maximum verification attempts per device code per RFC 8628 section 5.2
 	rateLimitWindow = 5   // Time window in minutes for rate limit tracking
 	errorBackoff    = 300 // Error backoff in seconds when rate limit exceeded (per RFC 8628)
@@ -67,9 +69,7 @@ func (s *RedisStore) SaveDeviceCode(ctx context.Context, code *DeviceCode) error
 
 	// Initialize rate limit tracking
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, code.DeviceCode)
-	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, code.DeviceCode)
-	pipe.Del(ctx, timeKey, backoffKey) // Clean start
-	pipe.Expire(ctx, timeKey, ttl)     // Ensure cleanup
+	pipe.Expire(ctx, timeKey, ttl) // Ensure cleanup
 
 	// Execute all operations
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -111,8 +111,8 @@ func (s *RedisStore) GetDeviceCodeByUserCode(ctx context.Context, userCode strin
 	return s.GetDeviceCode(ctx, deviceCode)
 }
 
-// SaveToken stores an access token for a device code
-func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *TokenResponse) error {
+// SaveTokenResponse stores a token response for a device code per RFC 8628
+func (s *RedisStore) SaveTokenResponse(ctx context.Context, deviceCode string, token *TokenResponse) error {
 	// Verify device code exists
 	code, err := s.GetDeviceCode(ctx, deviceCode)
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *To
 	// Marshal token
 	data, err := json.Marshal(token)
 	if err != nil {
-		return fmt.Errorf("marshaling token: %w", err)
+		return fmt.Errorf("marshaling token response: %w", err)
 	}
 
 	// Use pipeline for atomic update
@@ -143,29 +143,29 @@ func (s *RedisStore) SaveToken(ctx context.Context, deviceCode string, token *To
 
 	// Clean up rate limit data on success
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
-	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
-	pipe.Del(ctx, timeKey, backoffKey)
+	pollKey := fmt.Sprintf("%s%s", pollPrefix, deviceCode)
+	pipe.Del(ctx, timeKey, pollKey)
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("saving token: %w", err)
+		return fmt.Errorf("saving token response: %w", err)
 	}
 
 	return nil
 }
 
-// GetToken retrieves a stored token for a device code
-func (s *RedisStore) GetToken(ctx context.Context, deviceCode string) (*TokenResponse, error) {
+// GetTokenResponse retrieves a stored token response for a device code
+func (s *RedisStore) GetTokenResponse(ctx context.Context, deviceCode string) (*TokenResponse, error) {
 	data, err := s.client.Get(ctx, tokenPrefix+deviceCode).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("getting token: %w", err)
+		return nil, fmt.Errorf("getting token response: %w", err)
 	}
 
 	var token TokenResponse
 	if err := json.Unmarshal(data, &token); err != nil {
-		return nil, fmt.Errorf("unmarshaling token: %w", err)
+		return nil, fmt.Errorf("unmarshaling token response: %w", err)
 	}
 
 	return &token, nil
@@ -192,8 +192,8 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 
 	// Rate limit keys
 	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
-	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
-	pipe.Del(ctx, timeKey, backoffKey)
+	pollKey := fmt.Sprintf("%s%s", pollPrefix, deviceCode)
+	pipe.Del(ctx, timeKey, pollKey)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("deleting device code: %w", err)
@@ -202,83 +202,54 @@ func (s *RedisStore) DeleteDeviceCode(ctx context.Context, deviceCode string) er
 	return nil
 }
 
-// CheckDeviceCodeAttempts implements rate limiting for device code verification per RFC 8628 section 5.2
-// Uses Redis sorted sets for accurate sliding window tracking with exponential backoff
-func (s *RedisStore) CheckDeviceCodeAttempts(ctx context.Context, deviceCode string) (bool, error) {
-	// Get keys for atomic operations
-	deviceKey := devicePrefix + deviceCode
-	timeKey := fmt.Sprintf("%s%s:time", ratePrefix, deviceCode)
-	backoffKey := fmt.Sprintf("%s%s:backoff", ratePrefix, deviceCode)
+// GetPollCount gets the number of polls in the given window
+func (s *RedisStore) GetPollCount(ctx context.Context, deviceCode string, window time.Duration) (int, error) {
+	pollKey := fmt.Sprintf("%s%s", pollPrefix, deviceCode)
+	windowSecs := int64(window.Seconds())
+	now := time.Now().Unix()
+	min := fmt.Sprintf("%d", now-windowSecs)
+
+	// Get count of polls in window using sorted set
+	count, err := s.client.ZCount(ctx, pollKey, min, fmt.Sprintf("%d", now)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("getting poll count: %w", err)
+	}
+
+	return int(count), nil
+}
+
+// UpdatePollTimestamp updates the last poll timestamp
+func (s *RedisStore) UpdatePollTimestamp(ctx context.Context, deviceCode string) error {
+	code, err := s.GetDeviceCode(ctx, deviceCode)
+	if err != nil {
+		return fmt.Errorf("getting device code: %w", err)
+	}
+	if code == nil {
+		return ErrInvalidDeviceCode
+	}
+
+	code.LastPoll = time.Now()
+	return s.SaveDeviceCode(ctx, code)
+}
+
+// IncrementPollCount increments the poll counter with timestamp
+func (s *RedisStore) IncrementPollCount(ctx context.Context, deviceCode string) error {
+	pollKey := fmt.Sprintf("%s%s", pollPrefix, deviceCode)
 	now := time.Now().Unix()
 
-	// Use pipeline for atomic operations
-	pipe := s.client.Pipeline()
-
-	// Check device code exists
-	pipe.Exists(ctx, deviceKey)
-
-	// Check if in backoff period
-	pipe.Get(ctx, backoffKey)
-
-	// Log attempt in sorted set
-	pipe.ZAdd(ctx, timeKey, redis.Z{
+	// Add poll with score = timestamp
+	err := s.client.ZAdd(ctx, pollKey, redis.Z{
 		Score:  float64(now),
-		Member: now,
-	})
-
-	// Calculate sliding window
-	windowStart := now - int64(rateLimitWindow*60)
-
-	// Remove old attempts outside window
-	pipe.ZRemRangeByScore(ctx, timeKey, "-inf", fmt.Sprintf("%d", windowStart))
-
-	// Count attempts in current window
-	countCmd := pipe.ZCount(ctx, timeKey, fmt.Sprintf("%d", windowStart), fmt.Sprintf("%d", now))
-
-	// Execute all checks atomically
-	cmders, err := pipe.Exec(ctx)
+		Member: strconv.FormatInt(now, 10),
+	}).Err()
 	if err != nil {
-		return false, fmt.Errorf("executing rate limit check: %w", err)
+		return fmt.Errorf("incrementing poll count: %w", err)
 	}
 
-	// Verify device code exists
-	exists, err := cmders[0].(*redis.IntCmd).Result()
-	if err != nil {
-		return false, fmt.Errorf("checking device code existence: %w", err)
-	}
-	if exists == 0 {
-		return false, nil
+	// Set expiry on first poll
+	if err := s.client.Expire(ctx, pollKey, rateLimitWindow*time.Minute).Err(); err != nil {
+		return fmt.Errorf("setting poll key expiry: %w", err)
 	}
 
-	// Check if in backoff period
-	backoffResult := cmders[1].(*redis.StringCmd)
-	if backoffResult.Err() == nil {
-		// Still in backoff period
-		return false, nil
-	} else if !errors.Is(backoffResult.Err(), redis.Nil) {
-		return false, fmt.Errorf("checking backoff status: %w", backoffResult.Err())
-	}
-
-	// Get attempt count
-	count, err := countCmd.Result()
-	if err != nil {
-		return false, fmt.Errorf("getting attempt count: %w", err)
-	}
-
-	// Check against limit
-	allowed := count <= maxAttempts
-	if !allowed {
-		// Set backoff period
-		if err := s.client.Set(ctx, backoffKey, now, time.Duration(errorBackoff)*time.Second).Err(); err != nil {
-			return false, fmt.Errorf("setting backoff period: %w", err)
-		}
-
-		// Log for monitoring
-		blockedKey := fmt.Sprintf("%s%s:blocked", ratePrefix, deviceCode)
-		if err := s.client.Incr(ctx, blockedKey).Err(); err != nil {
-			return false, fmt.Errorf("incrementing blocked counter: %w", err)
-		}
-	}
-
-	return allowed, nil
+	return nil
 }
