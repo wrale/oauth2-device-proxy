@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/wrale/oauth2-device-proxy/internal/deviceflow"
 )
 
