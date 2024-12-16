@@ -10,8 +10,8 @@ import (
 // mockTemplates embeds templates.Templates and overrides methods for testing.
 // All methods follow RFC 8628 section 3.3 for user interaction requirements.
 type mockTemplates struct {
-	// Embed real templates struct to properly implement interface
-	templates.Templates
+	// Embed real templates struct as pointer to properly implement interface
+	*templates.Templates
 
 	// Mock function fields
 	renderVerify   func(w http.ResponseWriter, data templates.VerifyData) error
@@ -24,8 +24,9 @@ type mockTemplates struct {
 
 // newMockTemplates creates a new mock templates instance
 func newMockTemplates() *mockTemplates {
-	// Required empty template set per section 3.3
-	return &mockTemplates{}
+	return &mockTemplates{
+		Templates: &templates.Templates{}, // Initialize with empty embedded struct
+	}
 }
 
 // RenderVerify renders verification page per RFC 8628 section 3.3
