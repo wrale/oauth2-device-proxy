@@ -1,3 +1,4 @@
+// Package test provides common testing utilities
 package test
 
 import (
@@ -44,7 +45,11 @@ func (m *MockFlow) GetDeviceCode(ctx context.Context, deviceCode string) (*devic
 	return nil, nil
 }
 
-// CheckDeviceCode implements deviceflow.Flow
+// CheckDeviceCode implements deviceflow.Flow per RFC 8628 section 3.5 error order:
+// 1. Store errors take precedence (authorization server errors)
+// 2. Code existence and expiry (expired_token)
+// 3. Rate limiting (slow_down)
+// 4. Authorization state (authorization_pending/access_denied)
 func (m *MockFlow) CheckDeviceCode(ctx context.Context, deviceCode string) (*deviceflow.TokenResponse, error) {
 	if m.CheckDeviceCodeFunc != nil {
 		return m.CheckDeviceCodeFunc(ctx, deviceCode)
