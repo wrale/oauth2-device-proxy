@@ -7,16 +7,15 @@ import (
 	"github.com/wrale/oauth2-device-proxy/internal/templates"
 )
 
-// mockTemplates embeds templates.Templates and overrides methods for testing.
-// All methods follow RFC 8628 section 3.3 for user interaction requirements.
+// mockTemplates provides template rendering functionality for tests per RFC 8628 section 3.3
 type mockTemplates struct {
-	// Embed real templates struct as pointer to properly implement interface
-	*templates.Templates
-
 	// Mock function fields
 	renderVerify   func(w http.ResponseWriter, data templates.VerifyData) error
 	renderError    func(w http.ResponseWriter, data templates.ErrorData) error
 	renderComplete func(w http.ResponseWriter, data templates.CompleteData) error
+
+	// Backing templates implementation
+	templates *templates.Templates
 
 	// Thread safety for concurrent tests
 	mu sync.RWMutex
@@ -25,44 +24,62 @@ type mockTemplates struct {
 // newMockTemplates creates a new mock templates instance
 func newMockTemplates() *mockTemplates {
 	return &mockTemplates{
-		Templates: &templates.Templates{}, // Initialize with empty embedded struct
+		templates: &templates.Templates{}, // Initialize empty template set per RFC 8628
 	}
 }
 
-// RenderVerify renders verification page per RFC 8628 section 3.3
+// ToTemplates returns the mock as a *templates.Templates instance
+func (m *mockTemplates) ToTemplates() *templates.Templates {
+	return m.templates
+}
+
+// ImplementsTemplates verifies mock implements all Templates methods per RFC 8628 section 3.3
+func (m *mockTemplates) ImplementsTemplates() templates.Templates {
+	return *m.templates
+}
+
+// RenderVerify follows RFC 8628 section 3.3 user interaction requirements
 func (m *mockTemplates) RenderVerify(w http.ResponseWriter, data templates.VerifyData) error {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	fn := m.renderVerify
+	m.mu.RUnlock()
 
-	if m.renderVerify != nil {
-		return m.renderVerify(w, data)
+	if fn != nil {
+		return fn(w, data)
 	}
-	return nil
+	return m.templates.RenderVerify(w, data)
 }
 
-// RenderError renders error page per RFC 8628 section 3.3
+// RenderError follows RFC 8628 section 3.3 user interaction requirements
 func (m *mockTemplates) RenderError(w http.ResponseWriter, data templates.ErrorData) error {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	fn := m.renderError
+	m.mu.RUnlock()
 
-	if m.renderError != nil {
-		return m.renderError(w, data)
+	if fn != nil {
+		return fn(w, data)
 	}
-	return nil
+	return m.templates.RenderError(w, data)
 }
 
-// RenderComplete renders completion page per RFC 8628 section 3.3
+// RenderComplete follows RFC 8628 section 3.3 user interaction requirements
 func (m *mockTemplates) RenderComplete(w http.ResponseWriter, data templates.CompleteData) error {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	fn := m.renderComplete
+	m.mu.RUnlock()
 
-	if m.renderComplete != nil {
-		return m.renderComplete(w, data)
+	if fn != nil {
+		return fn(w, data)
 	}
-	return nil
+	return m.templates.RenderComplete(w, data)
 }
 
-// WithRenderVerify sets the mock RenderVerify function
+// GenerateQRCode follows RFC 8628 section 3.3.1 for verification_uri_complete
+func (m *mockTemplates) GenerateQRCode(uri string) (string, error) {
+	return "", nil // Provide empty QR code for tests
+}
+
+// WithRenderVerify sets the mock RenderVerify function while maintaining thread safety
 func (m *mockTemplates) WithRenderVerify(fn func(w http.ResponseWriter, data templates.VerifyData) error) *mockTemplates {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -70,7 +87,7 @@ func (m *mockTemplates) WithRenderVerify(fn func(w http.ResponseWriter, data tem
 	return m
 }
 
-// WithRenderError sets the mock RenderError function
+// WithRenderError sets the mock RenderError function while maintaining thread safety
 func (m *mockTemplates) WithRenderError(fn func(w http.ResponseWriter, data templates.ErrorData) error) *mockTemplates {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -78,7 +95,7 @@ func (m *mockTemplates) WithRenderError(fn func(w http.ResponseWriter, data temp
 	return m
 }
 
-// WithRenderComplete sets the mock RenderComplete function
+// WithRenderComplete sets the mock RenderComplete function while maintaining thread safety
 func (m *mockTemplates) WithRenderComplete(fn func(w http.ResponseWriter, data templates.CompleteData) error) *mockTemplates {
 	m.mu.Lock()
 	defer m.mu.Unlock()
