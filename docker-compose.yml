@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    command: 
+      - start-dev
+      - --db=postgres
+      - --hostname-strict=false
+      - --http-enabled=true
+      - --http-port=8080
+      - --proxy=edge
+    environment:
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      KC_DB_SCHEMA: public
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: http://localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      start_period: 10s
+      interval: 30s
+      retries: 3
+      timeout: 5s
+
+  oauth2-device-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: device-flow-demo
+      KEYCLOAK_CLIENT_ID: device-proxy
+      KEYCLOAK_CLIENT_SECRET: your_client_secret_here
+      BASE_URL: http://localhost:8085
+      OAUTH_CLIENT_ID: device-proxy
+      OAUTH_CLIENT_SECRET: your_client_secret_here
+      OAUTH_AUTH_ENDPOINT: http://keycloak:8080/realms/device-flow-demo/protocol/openid-connect/auth
+      OAUTH_TOKEN_ENDPOINT: http://keycloak:8080/realms/device-flow-demo/protocol/openid-connect/token
+      CSRF_SECRET: your_csrf_secret_here_make_this_random_and_secure
+      PORT: 8085
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  device-simulator:
+    image: curlimages/curl:8.5.0
+    command: >
+      sh -c '
+      echo "Device Simulator Starting..." &&
+      while true; do
+        echo "Requesting device code..." &&
+        RESP=$$(curl -s -X POST http://oauth2-device-proxy:8085/device/code \
+          -d "client_id=device-simulator") &&
+        echo "Response: $$RESP" &&
+        CODE=$$(echo $$RESP | jq -r .device_code) &&
+        if [ "$$CODE" != "null" ]; then
+          echo "Got device code: $$CODE" &&
+          echo "User should visit: $$(echo $$RESP | jq -r .verification_uri)" &&
+          echo "And enter code: $$(echo $$RESP | jq -r .user_code)" &&
+          while true; do
+            sleep $$(echo $$RESP | jq -r .interval) &&
+            TOKEN_RESP=$$(curl -s -X POST http://oauth2-device-proxy:8085/device/token \
+              -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
+              -d "client_id=device-simulator" \
+              -d "device_code=$$CODE") &&
+            echo "Token Response: $$TOKEN_RESP" &&
+            if echo $$TOKEN_RESP | jq -e .access_token > /dev/null; then
+              echo "Successfully authenticated!" &&
+              break
+            fi
+          done
+        fi
+        echo "Waiting 30 seconds before next attempt..." &&
+        sleep 30
+      done
+      '
+    depends_on:
+      oauth2-device-proxy:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    driver: bridge

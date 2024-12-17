@@ -1,0 +1,9 @@
+{{define "title"}}Error{{end}}
+
+{{define "content"}}
+<h1>{{.Title}}</h1>
+
+<p>{{.Message}}</p>
+
+<button onclick="window.location.href='/device'" type="button">Try Again</button>
+{{end}}
